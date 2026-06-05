@@ -192,16 +192,36 @@ Not needed for Phase 0; documented so it's ready when we get there.
 Unify history with the live recording by backfilling CME data into the same
 lake. The free Databento plan includes ~$125 of credit.
 
-1. Get an API key at <https://databento.com>, put it in `.env`:
-   `OPTIONS_DATABENTO_API_KEY=db-...`
-2. **Dry-run** (prints estimated cost, downloads nothing):
+The key lives in `pass` at `databento/api_key`. Either add it to `.env`
+(`OPTIONS_DATABENTO_API_KEY=db-...`) for turnkey runs, or bridge it from `pass`
+into the process env for a single command (keeps the secret off disk):
+
+```fish
+set -lx OPTIONS_DATABENTO_API_KEY (pass show databento/api_key)
+```
+
+1. **Dry-run** (prints estimated cost, downloads nothing — *always do this
+   first*; `ohlcv-1m` bills at ~$70/GB):
    ```fish
    uv run python -m options_system.data.databento_loader \
-       --start 2026-01-01 --end 2026-06-01 --schema ohlcv-1m
+       --symbols MES MNQ --start 2019-05-06 --end 2026-06-05 --schema ohlcv-1m
    ```
-3. **Confirm** to actually download (consumes credits): add `--confirm`.
+2. **Confirm** to actually download (consumes credits): add `--confirm`. The
+   download is per-year-chunked + retried, and the lake write is idempotent, so a
+   re-run resumes and never duplicates.
+3. **Validate** (report-only; `--outrights-only` drops calendar spreads that
+   parent `.FUT` symbology also returns):
+   ```fish
+   uv run python -m options_system.data.validate --symbols MES MNQ --outrights-only
+   ```
+4. **Stitch** continuous front-month series + record rolls:
+   ```fish
+   uv run python -m options_system.data.continuous --symbols MES MNQ
+   ```
 
-Without the key the loader is a clean no-op (exit 0, no network).
+Without the key the loader is a clean no-op (exit 0, no network). The
+**2019-05-06 → 2026-06-05** MES+MNQ `ohlcv-1m` backfill cost **$26.89**
+(7,364,934 rows, ~0.41 GB); see `docs/DECISIONS.md` Phase 1.5.
 
 ---
 

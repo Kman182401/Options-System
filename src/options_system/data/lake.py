@@ -21,6 +21,7 @@ The writer does not repair, forward-fill, or synthesize data. Gaps stay gaps.
 
 from __future__ import annotations
 
+from glob import glob as _glob
 from pathlib import Path
 from uuid import uuid4
 
@@ -217,7 +218,9 @@ class Lake:
     def scan(self, dataset: str, symbol: str | None = None) -> pl.LazyFrame:
         """Lazily scan a dataset (optionally one symbol). Empty if nothing on disk."""
         _check(dataset)
-        files = list(Path().glob(self.partition_glob(dataset, symbol)))
+        # stdlib glob handles the absolute partition pattern (Path.glob rejects
+        # non-relative patterns on 3.12); matches the reader in store.py.
+        files = _glob(self.partition_glob(dataset, symbol))
         if not files:
             return empty_frame(dataset).lazy()
         # No hive parsing: `symbol` already lives in the data; avoids a column clash.

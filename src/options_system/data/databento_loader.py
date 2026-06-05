@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import UTC, datetime
+import time
+from datetime import UTC, date, datetime
 
 import polars as pl
 
@@ -55,7 +56,6 @@ def _estimate_cost(client, symbols, schema, start, end) -> float | None:
                 start=start,
                 end=end,
                 stype_in="parent",
-                mode="historical-streaming",
             )
         )
     except Exception as exc:  # noqa: BLE001 - estimate is best-effort
@@ -98,24 +98,66 @@ def _to_lake_rows(pdf, symbol: str, dataset: str) -> pl.DataFrame:
     )
 
 
+def _year_chunks(start: str, end: str) -> list[tuple[str, str]]:
+    """Split ``[start, end)`` into per-calendar-year ``[s, e)`` chunks (end-exclusive).
+
+    Chunking makes the backfill resumable and limits the blast radius of a single
+    network failure: each chunk is downloaded and written independently, and the
+    lake's idempotent dedupe means re-running skips chunks already on disk.
+    """
+    s, e = date.fromisoformat(start), date.fromisoformat(end)
+    out: list[tuple[str, str]] = []
+    cur = s
+    while cur < e:
+        nxt = min(date(cur.year + 1, 1, 1), e)
+        out.append((cur.isoformat(), nxt.isoformat()))
+        cur = nxt
+    return out
+
+
+def _get_range_with_retry(client, *, symbols, schema, start, end, retries=3, backoff=3.0):
+    """``timeseries.get_range`` with linear backoff on transient failures."""
+    last: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return client.timeseries.get_range(
+                dataset=DATASET,
+                symbols=symbols,
+                schema=schema,
+                start=start,
+                end=end,
+                stype_in="parent",
+            )
+        except Exception as exc:  # noqa: BLE001 - transient network/rate-limit, retried
+            last = exc
+            if attempt < retries:
+                print(f"  get_range {start}..{end} failed ({exc}); retry {attempt}/{retries - 1}")
+                time.sleep(backoff * attempt)
+    assert last is not None
+    raise last
+
+
 def _download_and_store(client, symbols: list[str], schema: str, start: str, end: str) -> int:
     lake = Lake()
     dataset = _SCHEMA_TO_DATASET[schema]
     written = 0
     for symbol in symbols:
-        data = client.timeseries.get_range(
-            dataset=DATASET,
-            symbols=[f"{symbol}.FUT"],
-            schema=schema,
-            start=start,
-            end=end,
-            stype_in="parent",
-        )
-        pdf = data.to_df()  # prices as float dollars, symbol mapped
-        if pdf.empty:
-            print(f"{symbol}: no records for {start}..{end}")
-            continue
-        written += lake.write(dataset, _to_lake_rows(pdf, symbol, dataset))
+        for cstart, cend in _year_chunks(start, end):
+            data = _get_range_with_retry(
+                client, symbols=[f"{symbol}.FUT"], schema=schema, start=cstart, end=cend
+            )
+            pdf = data.to_df()  # prices as float dollars, symbol mapped
+            if pdf.empty:
+                print(f"{symbol} {cstart}..{cend}: no records")
+                continue
+            if "symbol" not in pdf.columns:
+                raise RuntimeError(
+                    f"{symbol}: Databento frame missing 'symbol' column "
+                    "(expected map_symbols=True) — cannot derive contract_id"
+                )
+            n = lake.write(dataset, _to_lake_rows(pdf, symbol, dataset))
+            written += n
+            print(f"{symbol} {cstart}..{cend}: +{n} rows (running total {written})")
     return written
 
 

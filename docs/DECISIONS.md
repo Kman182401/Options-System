@@ -146,3 +146,71 @@ entries short: what was decided, and *why*.
   (braxen-app, voice-assistant, security-tools, airbnb-bot), so removing them
   would break those. The `OPTIONS_` prefix is what stops this project from
   inheriting that shared Telegram bot — use a dedicated bot via `.env` instead.
+
+---
+
+## Phase 1.5 — Databento historical backfill (2026-06-05)
+
+### What landed (spend gate honored)
+- **Symbols MES + MNQ, schema `ohlcv-1m` only**, dataset **`GLBX.MDP3`**, window
+  **2019-05-06 (micros' inception) → 2026-06-05 (dataset end)**. Full history.
+- **Cost $26.89** (actual == dry-run estimate), **~0.41 GB uncompressed**,
+  **7,364,934 rows**. The mandatory dry-run estimate was presented and explicitly
+  approved before any `--confirm` spend. ~21% of the $125 free credit. (Note:
+  `ohlcv-1m` bills at **$70/GB** — pricier per GB than the trades feed's volume
+  would suggest; that is what made it ~$27 rather than "a few dollars".)
+
+### Symbology — parent `.FUT`, raw per-contract retained
+- Pulled with **parent symbology** (`MES.FUT` / `MNQ.FUT`, `stype_in=parent`).
+  This returns **individual contract months as raw per-contract rows**
+  (`contract_id` = the raw expiry symbol, e.g. `MESM9`), so `continuous.py`
+  remains the sole roll authority. Databento `to_df()` defaults used:
+  `price_type=float` (prices in dollars), `map_symbols=True` (the `symbol` column
+  is the raw contract), `pretty_ts=True`.
+- **Parent `.FUT` also returns calendar-spread instruments** (`contract_id` with a
+  dash, e.g. `MNQU0-MNQZ0`): MES 76 spreads / 80,267 rows, MNQ 59 spreads /
+  58,707 rows. Spread prices legitimately go negative (min −39.9). **Decision:
+  keep them in the raw lake (raw retention; already paid), but exclude them
+  (`contract_id` containing `-`) from continuous stitching and from the
+  "outrights" validation view.** Not deleted, not repaired. Re-evaluate whether to
+  purge spreads later.
+
+### Validation result (report-only, nothing repaired)
+- **Outright contracts validate clean**: MES 33 outrights / 3,509,950 rows and
+  MNQ 33 outrights / 3,716,010 rows — **0** duplicate / monotonic / OHLC / ingest
+  errors. Only warnings are `gaps` (RTH minutes > 120s on illiquid back-months —
+  expected; gaps stay gaps).
+- The **only** error-severity findings on the full set (24,079 OHLC rows) are the
+  calendar spreads' negative prices — valid for spreads, excluded above.
+- **Databento flagged 11 reduced-quality ("degraded") days**: 2020-02-27,
+  2020-02-28, 2020-06-30, 2021-12-05, 2022-01-02, 2025-09-17, 2025-09-24,
+  2025-11-28, 2026-03-15, 2026-03-16, 2026-04-10. Recorded, not altered.
+
+### Continuous stitch
+- **28 quarterly rolls per symbol** (2019Q2 → 2026Q2), volume/OI crossover with the
+  5-day calendar fallback. **Ratio** back-adjustment (the configured default);
+  **seam continuity gap = 0.0%** by construction. `roll_events` persisted (28 ×2).
+  Continuous series stays **derived on demand** via `store.get_bars(continuous=True)`.
+- **Expiry derivation** (no extra `definition`-schema spend): from the raw code
+  `{SYM}{H|M|U|Z}{year-digit}` → month ∈ {Mar,Jun,Sep,Dec}, **expiry = 3rd Friday**
+  of that month (verified against last-trade dates). Single-digit year decode for
+  this 2019-2027 span: `9` → 2019, `0..8` → 2020..2028.
+
+### Loader / lake fixes made against the real API (in-scope, data layer only)
+- **`databento_loader.py`**: added **per-year chunking + retry** to
+  `_download_and_store` (resumable; the idempotent lake write skips chunks already
+  on disk). Removed the now-**deprecated `mode=` arg** from `get_cost`.
+- **`lake.py::scan`**: was `Path().glob(<absolute pattern>)`, which raises
+  `NotImplementedError: Non-relative patterns are unsupported` on 3.12 (the lake
+  root is absolute). Switched to stdlib `glob`, matching `store.py`. It had only
+  been exercised on relative paths before.
+- **CLIs added** so the steps are reproducible: `python -m options_system.data.validate`
+  (`--outrights-only`) and `python -m options_system.data.continuous`.
+
+### Key handling
+- `OPTIONS_DATABENTO_API_KEY` was **not** in `.env`/env; the key lives in `pass`
+  at `databento/api_key`. The estimate and the download were run by bridging it
+  into the process env for that command only (`OPTIONS_DATABENTO_API_KEY="$(pass
+  show databento/api_key)" …`) — **no secret written to `.env` or disk**. To make
+  future runs (feature phase, re-backfill) turnkey, add it to `.env` or keep
+  bridging from `pass`.

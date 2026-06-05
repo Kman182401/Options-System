@@ -21,6 +21,7 @@ gaps stay gaps. Calendar-precise (holiday-aware) gap detection via
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import cast
 
 import polars as pl
 
@@ -165,3 +166,84 @@ def validate_quotes(df: pl.DataFrame) -> ValidationReport:
             )
         )
     return ValidationReport(findings)
+
+
+# --- Coverage + CLI driver (report-only) -----------------------------------
+
+_FREQ_DATASET = {"1m": "bars_1m", "5s": "bars_5s"}
+
+
+def coverage(df: pl.DataFrame) -> list[dict]:
+    """Per-contract coverage: row count + first/last bar ``ts_event``."""
+    if df.is_empty():
+        return []
+    return (
+        df.group_by("contract_id")
+        .agg(
+            rows=pl.len(),
+            first_bar=pl.col("ts_event").min(),
+            last_bar=pl.col("ts_event").max(),
+        )
+        .sort("first_bar")
+        .to_dicts()
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run validation across the lake for one or more symbols. Reports only."""
+    import argparse
+
+    from config.settings import Settings
+
+    from .lake import Lake
+
+    p = argparse.ArgumentParser(prog="validate", description="Validate lake bars; report only.")
+    p.add_argument("--symbols", nargs="+", default=None, help="default: settings.record_symbols")
+    p.add_argument("--freq", choices=sorted(_FREQ_DATASET), default="1m")
+    p.add_argument(
+        "--outrights-only",
+        action="store_true",
+        help="exclude calendar-spread instruments (contract_id containing '-')",
+    )
+    args = p.parse_args(argv)
+
+    symbols = args.symbols or Settings().record_symbols
+    dataset = _FREQ_DATASET[args.freq]
+    lake = Lake()
+    overall_ok = True
+    for sym in symbols:
+        # cast: collect() (no background) yields a DataFrame; polars' overload
+        # stub widens the return to a union that ty can't narrow.
+        df = cast("pl.DataFrame", lake.scan(dataset, sym).collect())
+        if not df.is_empty():
+            n_spread = df.filter(pl.col("contract_id").str.contains("-")).height
+            if args.outrights_only:
+                df = df.filter(~pl.col("contract_id").str.contains("-"))
+            tag = " (outrights only)" if args.outrights_only else ""
+            disp = "excluded" if args.outrights_only else "included"
+            print(
+                f"\n=== {sym} ({args.freq}){tag} — {df.height:,} rows "
+                f"[{n_spread:,} spread rows {disp}] ==="
+            )
+        else:
+            print(f"\n=== {sym} ({args.freq}) — 0 rows ===")
+        if df.is_empty():
+            print("  (no data on disk)")
+            continue
+        for c in coverage(df):
+            print(
+                f"  {c['contract_id']:>10}  rows={c['rows']:>10,}  "
+                f"{c['first_bar']}  ->  {c['last_bar']}"
+            )
+        rep = validate_bars(df, args.freq)
+        print(f"  validation: ok={rep.ok}  errors={rep.n_errors}  warnings={rep.n_warnings}")
+        for f in rep.findings:
+            where = f" (contract={f.contract_id})" if f.contract_id else ""
+            print(f"    [{f.severity}] {f.check}: {f.detail}{where}")
+        overall_ok = overall_ok and rep.ok
+    print(f"\nOVERALL OK (no error-severity findings): {overall_ok}")
+    return 0 if overall_ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

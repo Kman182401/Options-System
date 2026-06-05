@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
+from typing import cast
 
 import polars as pl
 
@@ -213,3 +214,132 @@ def persist_rolls(lake, rolls: pl.DataFrame, ingest_ts: datetime, source: str = 
         pl.lit(source).alias("source"),
     )
     return lake.write("roll_events", enriched)
+
+
+# --- CLI driver: detect + persist rolls from landed bars, verify continuity ---
+
+
+def _third_friday(year: int, month: int) -> date:
+    """The CME equity-index quarterly expiry: 3rd Friday of the contract month."""
+    first = date(year, month, 1)
+    offset = (4 - first.weekday()) % 7  # 4 = Friday
+    return date(year, month, 1 + offset + 14)
+
+
+def _expiry_from_code(contract_id: str) -> date:
+    """Derive expiry from a raw code like ``MNQH3`` (month letter + 1-digit year).
+
+    Single-digit year decode for this dataset's 2019-2027 span: ``9`` -> 2019,
+    ``0..8`` -> 2020..2028. Documented in docs/DECISIONS.md.
+    """
+    month = CODE_MONTH[contract_id[-2]]
+    d = int(contract_id[-1])
+    year = 2019 if d == 9 else 2020 + d
+    return _third_friday(year, month)
+
+
+def _daily_volume(bars: pl.DataFrame) -> pl.DataFrame:
+    """Collapse outright bars to a daily (date, contract_id, expiry, volume, con_id) table."""
+    daily = (
+        bars.with_columns(pl.col("ts_event").dt.date().alias("date"))
+        .group_by(["date", "contract_id"])
+        .agg(volume=pl.col("volume").sum(), con_id=pl.col("con_id").first())
+        .sort(["date", "contract_id"])
+    )
+    return daily.with_columns(
+        pl.col("contract_id").map_elements(_expiry_from_code, return_dtype=pl.Date).alias("expiry")
+    )
+
+
+def _seam_gaps(cont: pl.DataFrame, rolls: pl.DataFrame) -> list[dict]:
+    """For each roll, the % jump in the continuous (adjusted) close across the seam.
+
+    Ratio/panama back-adjustment should make this ~0 by construction; a large gap
+    means a seam where one side had no price to anchor to.
+    """
+    out: list[dict] = []
+    s = cont.sort("ts_event")
+    for r in rolls.iter_rows(named=True):
+        t = r["ts_event"]
+        before = s.filter(pl.col("ts_event") < t)
+        after = s.filter(pl.col("ts_event") >= t)
+        if before.is_empty() or after.is_empty():
+            continue
+        pb = float(before["close"][-1])
+        pa = float(after["close"][0])
+        gap_pct = abs(pa - pb) / pb * 100 if pb else float("nan")
+        out.append({"date": str(t)[:10], "gap_pct": round(gap_pct, 4)})
+    return out
+
+
+def build_for_symbol(symbol: str, calendar_days: int, adjustment: str) -> dict:
+    """Detect rolls from landed outright bars, persist them, verify seam continuity."""
+    from .lake import Lake
+
+    lake = Lake()
+    # cast: LazyFrame.collect() (no background) is a DataFrame; polars' overload
+    # stub widens it to a union, which ty can't narrow.
+    bars = cast("pl.DataFrame", lake.scan("bars_1m", symbol).collect())
+    bars = bars.filter(~pl.col("contract_id").str.contains("-"))  # outrights only
+    if bars.is_empty():
+        return {"symbol": symbol, "rolls": 0, "note": "no outright bars on disk"}
+
+    daily = _daily_volume(bars)
+    rolls = detect_rolls(daily, symbol, calendar_days)
+    cont = build_continuous(bars, rolls, adjustment=adjustment)
+    seams = _seam_gaps(cont, rolls)
+    persisted = persist_rolls(lake, rolls, datetime.now(UTC), source="derived")
+    max_gap = max((s["gap_pct"] for s in seams), default=0.0)
+    return {
+        "symbol": symbol,
+        "outright_rows": bars.height,
+        "rolls_detected": rolls.height,
+        "rolls_persisted": persisted,
+        "continuous_rows": cont.height,
+        "max_seam_gap_pct": max_gap,
+        "events": rolls.select(
+            ["ts_event", "from_contract_id", "to_contract_id", "rule"]
+        ).to_dicts()
+        if not rolls.is_empty()
+        else [],
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    from config.settings import Settings
+
+    settings = Settings()
+    p = argparse.ArgumentParser(
+        prog="continuous", description="Stitch continuous series from lake."
+    )
+    p.add_argument("--symbols", nargs="+", default=None, help="default: settings.record_symbols")
+    p.add_argument("--calendar-days", type=int, default=settings.roll_calendar_days)
+    p.add_argument(
+        "--adjustment", default=settings.continuous_adjustment, choices=["ratio", "panama"]
+    )
+    args = p.parse_args(argv)
+
+    symbols = args.symbols or settings.record_symbols
+    print(f"adjustment={args.adjustment}  calendar_days={args.calendar_days}")
+    for sym in symbols:
+        res = build_for_symbol(sym, args.calendar_days, args.adjustment)
+        print(f"\n=== {sym} ===")
+        print(
+            f"  outright_rows={res.get('outright_rows', 0):,}  "
+            f"rolls_detected={res.get('rolls_detected', 0)}  "
+            f"persisted={res.get('rolls_persisted', 0)}  "
+            f"continuous_rows={res.get('continuous_rows', 0):,}  "
+            f"max_seam_gap={res.get('max_seam_gap_pct', 0)}%"
+        )
+        for e in res.get("events", []):
+            print(
+                f"    {str(e['ts_event'])[:10]}  {e['from_contract_id']} -> "
+                f"{e['to_contract_id']}  ({e['rule']})"
+            )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
