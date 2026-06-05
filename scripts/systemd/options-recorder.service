@@ -1,0 +1,19 @@
+# systemd USER unit: live data recorder (MES/MNQ L1 + bars -> Parquet lake).
+# Install/enable: see options-gateway.service header (link both, daemon-reload, enable).
+#   systemctl --user enable --now options-recorder.service
+#   journalctl --user -u options-recorder.service -f      # follow logs
+# Runs unattended; restarts on crash and after the IBKR daily reset window.
+[Unit]
+Description=Options-System live data recorder (MES/MNQ L1 + bars)
+After=options-gateway.service network-online.target
+Wants=options-gateway.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/karson/Options-System
+ExecStart=/usr/bin/fish -l -c 'cd /home/karson/Options-System; exec uv run python -m options_system.data.recorder'
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

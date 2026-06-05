@@ -71,6 +71,20 @@ class Settings(BaseSettings):
     ibkr_port: int = 4002  # IB Gateway paper API; TWS paper is 7497
     ibkr_client_id: int = 1
 
+    # --- IBKR paper login for IBC auto-login (loaded from .env; never committed). ---
+    # Leave unset to log in to IB Gateway by hand instead. The username is not a
+    # secret; the password is a SecretStr and is only ever written to a tmpfs file
+    # at launch (see scripts/start_gateway.fish), never to disk or git.
+    ibkr_username: str | None = None
+    ibkr_password: SecretStr | None = None
+
+    # --- Data layer ---
+    record_symbols: list[str] = ["MES", "MNQ"]  # CME micro futures to record live
+    recorder_client_id: int = 11  # distinct from smoke-test/engine client ids
+    recorder_flush_seconds: int = 30  # how often the recorder flushes buffers to Parquet
+    roll_calendar_days: int = 5  # calendar fallback: roll this many days before expiry
+    continuous_adjustment: str = "ratio"  # back-adjustment: "ratio" or "panama"
+
     # --- Secrets (loaded from .env; never committed) ---
     databento_api_key: SecretStr | None = None
     finnhub_api_key: SecretStr | None = None
@@ -95,6 +109,14 @@ class Settings(BaseSettings):
                 "Live trading must never be enabled via configuration — it requires an "
                 "explicit, human-approved code change."
             )
+        return normalized
+
+    @field_validator("continuous_adjustment")
+    @classmethod
+    def _validate_adjustment(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        if normalized not in {"ratio", "panama"}:
+            raise ValueError(f"continuous_adjustment={v!r} invalid; use 'ratio' or 'panama'.")
         return normalized
 
     @classmethod

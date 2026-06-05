@@ -1,0 +1,23 @@
+# systemd USER unit: IB Gateway (paper) via IBC auto-login.
+# Install (does NOT auto-run; you enable it):
+#   mkdir -p ~/.config/systemd/user
+#   ln -sf ~/Options-System/scripts/systemd/options-gateway.service  ~/.config/systemd/user/
+#   ln -sf ~/Options-System/scripts/systemd/options-recorder.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now options-gateway.service
+# Requires OPTIONS_IBKR_USERNAME/PASSWORD in .env (else it aborts cleanly — log in by hand).
+[Unit]
+Description=Options-System IB Gateway (paper) via IBC
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/karson/Options-System
+ExecStart=/usr/bin/fish -l -c 'exec /home/karson/Options-System/scripts/start_gateway.fish'
+ExecStop=/usr/bin/fish -l -c 'exec /home/karson/Options-System/scripts/stop_gateway.fish'
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

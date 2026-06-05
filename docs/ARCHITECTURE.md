@@ -98,6 +98,35 @@ Two properties make this trustworthy:
 
 ---
 
+## Data layer in detail (Phase 1.1, implemented)
+
+```
+ IBKR paper (ib_async, read-only)
+   ├─ reqRealTimeBars(5s) ─┐
+   └─ reqMktData (L1)  ────┤
+                           ▼
+                  data/recorder.py ──(append-only, dedup)──▶ Parquet lake (data/)
+                           │                                  bars_5s · bars_1m ·
+                  5s→1m aggregation,                          quotes_l1 · trades ·
+                  RTH/ETH tagging,                            roll_events
+                  ts_event + ts_ingest                                │
+                                                                      ▼
+   Databento history ──(scaffold, cost-guarded)──▶ same lake     data/store.py (DuckDB)
+                                                                  get_bars / get_quotes_l1
+                                                                  asof_join  ← leak-free
+                                                       ┌──────────────┼──────────────┐
+                                                       ▼              ▼              ▼
+                                              continuous.py     validate.py   observability/
+                                              roll + back-adj   dupes/gaps/   data_health.py
+                                              (raw kept)        ohlc/ingest   (Streamlit)
+```
+
+The contract with the rest of the system: **everything reads through
+`store.py`**, whose `asof_join` makes look-ahead impossible. Raw per-contract
+data is immutable; the continuous (back-adjusted) series is derived on demand.
+Live (IBKR, forward from today) and historical (Databento) land in the *same*
+schema, so they're queried identically.
+
 ## Where each module lives
 
 | Concern | Module | One-liner |

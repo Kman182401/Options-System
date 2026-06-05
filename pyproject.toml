@@ -23,6 +23,8 @@ dependencies = [
     "numpy>=1.26.4",
     "duckdb>=1.0",
     "pyarrow>=23.0.1",
+    # --- Historical backfill (CME via Databento; loader is scaffold-only) ---
+    "databento==0.79.0",
     # --- Sentiment (GPU: FinBERT via transformers/torch) ---
     "torch==2.9.1",
     "transformers>=5.10",

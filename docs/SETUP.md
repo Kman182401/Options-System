@@ -86,10 +86,55 @@ the script prints this checklist and exits non-zero — that's correct.
 Paper market data may be **delayed** without a subscription; delayed is fine for
 Phase 0 (the script requests delayed data and historical bars).
 
-### 3.5 Later: headless auto-login (IBC)
-For unattended running, **IBC** (<https://github.com/IbcAlpha/IBC>) can auto-login
-and auto-restart IB Gateway on Linux. **Do not set this up yet** — note it for the
-paper-hardening step.
+### 3.5 Auto-login + auto-restart (IBC) — optional
+For unattended recording, **IBC** (IbcAlpha/IBC, installed at `~/ibc`) auto-logs in
+and restarts IB Gateway. Put your **paper** credentials in `.env`:
+
+```
+OPTIONS_IBKR_USERNAME=your_paper_user
+OPTIONS_IBKR_PASSWORD=your_paper_password
+```
+
+Then launch via IBC (credentials are rendered into a tmpfs config, mode 600,
+never written to persistent disk or git):
+
+```fish
+./scripts/start_gateway.fish        # stop with: ./scripts/stop_gateway.fish
+```
+
+Without those vars IBC aborts cleanly and you log in by hand instead
+(`~/ibgateway/ibgateway`). NOTE: IBC auto-login is scaffolded but **unverified
+until your first paper login**; if IBC can't find the Gateway, adjust
+`TWS_PATH` / `TWS_MAJOR_VRSN` in `scripts/start_gateway.fish` (Gateway is at
+`~/ibgateway`, v10.45).
+
+### 3.6 Run Gateway + recorder unattended (systemd user units)
+Two user units live in `scripts/systemd/`:
+
+```fish
+mkdir -p ~/.config/systemd/user
+ln -sf ~/Options-System/scripts/systemd/options-gateway.service  ~/.config/systemd/user/
+ln -sf ~/Options-System/scripts/systemd/options-recorder.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now options-gateway.service options-recorder.service
+journalctl --user -u options-recorder.service -f        # follow logs
+```
+
+The recorder streams MES + MNQ L1 + 5s/1m bars into the Parquet lake under
+`data/`, restarting on crash and after the IBKR daily reset. Foreground instead:
+
+```fish
+uv run python -m options_system.data.recorder
+```
+
+### 3.7 Data-health dashboard
+
+```fish
+uv run streamlit run src/options_system/observability/data_health.py
+```
+
+Per symbol: last-bar age, rows/day, front-month contract, last roll, validation
+status. Read-only over the lake.
 
 ---
 
@@ -122,6 +167,24 @@ Not needed for Phase 0; documented so it's ready when we get there.
 
 ---
 
+## 5b. Databento historical backfill (optional — consumes credits)
+
+Unify history with the live recording by backfilling CME data into the same
+lake. The free Databento plan includes ~$125 of credit.
+
+1. Get an API key at <https://databento.com>, put it in `.env`:
+   `OPTIONS_DATABENTO_API_KEY=db-...`
+2. **Dry-run** (prints estimated cost, downloads nothing):
+   ```fish
+   uv run python -m options_system.data.databento_loader \
+       --start 2026-01-01 --end 2026-06-01 --schema ohlcv-1m
+   ```
+3. **Confirm** to actually download (consumes credits): add `--confirm`.
+
+Without the key the loader is a clean no-op (exit 0, no network).
+
+---
+
 ## 6. Day-to-day commands
 
 ```fish
@@ -131,4 +194,7 @@ uv run ruff check .                  # lint
 uv run ruff format .                 # format
 uv run python scripts/smoke_test_gpu.py
 uv run python scripts/smoke_test_ibkr.py   # needs IB Gateway running
+uv run python -m options_system.data.recorder              # live recorder (Gateway up)
+uv run streamlit run src/options_system/observability/data_health.py
+./scripts/start_gateway.fish               # IBC auto-login (creds in .env)
 ```

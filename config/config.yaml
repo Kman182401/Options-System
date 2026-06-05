@@ -23,3 +23,10 @@ risk_per_trade_usd: 100.0
 max_position_size: 1
 max_concurrent_positions: 1
 max_account_drawdown_pct: 0.10
+
+# Data layer (non-secret tunables).
+record_symbols: [MES, MNQ]   # CME micro futures recorded live
+recorder_client_id: 11       # IBKR API client id for the recorder (distinct from others)
+recorder_flush_seconds: 30   # recorder flush cadence to the Parquet lake
+roll_calendar_days: 5        # calendar fallback: roll this many days before expiry
+continuous_adjustment: ratio # back-adjustment convention: "ratio" or "panama"

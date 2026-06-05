@@ -67,6 +67,66 @@ entries short: what was decided, and *why*.
 - Default `ibkr_port=4002` (IB Gateway **paper** API). TWS paper would be 7497.
   Documented in `docs/SETUP.md`.
 
+---
+
+## Phase 1.1 — Data layer (2026-06-05)
+
+### Storage
+- **Parquet lake** at `data/<dataset>/symbol=<SYM>/date=<YYYY-MM-DD>/`. Datasets:
+  `bars_1m`, `bars_5s`, `quotes_l1`, `trades`, `roll_events`. Every market-data
+  row carries `ts_event` (exchange) + `ts_ingest` (receipt), both UTC — the
+  no-look-ahead foundation.
+- **Append-only + idempotent** writer (`lake.py`): natural-key dedupe (e.g. bars
+  keyed on `(contract_id, ts_event)`), never overwrites a partition, zstd.
+  Re-recording a day cannot duplicate. Small files accumulate; `compact()` merges
+  them. `symbol` is kept as a data column (not hive-parsed on read) to avoid a
+  path/column clash.
+- **DuckDB session pinned to UTC** in `store.py` (`SET TimeZone='UTC'`) so every
+  `TIMESTAMPTZ` read comes back UTC-aware (DuckDB otherwise renders in the local
+  zone and clashes with our UTC literals).
+
+### Point-in-time correctness
+- All retrieval goes through `store.py`. `asof_join` uses DuckDB `ASOF JOIN`
+  (`left.ts_event >= right.ts_event`) so a row can never see future auxiliary
+  data. Proven leak-free by test.
+
+### Continuous contracts
+- **Back-adjustment convention: ratio (multiplicative), default.** Panama
+  (difference) also implemented (`continuous_adjustment` setting). Ratio keeps
+  returns/percentage moves consistent across the seam, which suits an intraday
+  return-based strategy. Raw per-`contract_id` data is never mutated; the
+  continuous series is **derived on demand** (not materialized) so we can change
+  the convention later without re-recording.
+- Roll rule: volume/OI crossover with a calendar fallback `roll_calendar_days`
+  (default 5) before expiry. Each roll is recorded in `roll_events`.
+
+### New dependencies
+- **`databento==0.79.0`** — historical backfill client (loader is scaffold-only,
+  cost-guarded, no-ops without a key; never auto-downloads).
+- **`exchange-calendars` deliberately NOT added** — gap detection uses the RTH
+  session tag + a threshold (deterministic, dep-free). Calendar-precise
+  (holiday-aware) gap detection is deferred until we actually need it, keeping
+  the dependency set minimal.
+
+### IBKR / IBC
+- **IB Gateway 10.45** installed at `~/ibgateway`; **IBC 3.23.0** at `~/ibc`.
+- IBC auto-login is **scaffolded** (`scripts/render_ibc_config.py` +
+  `start_gateway.fish` + systemd user units). Credentials come from `.env`
+  (`OPTIONS_IBKR_USERNAME` / `OPTIONS_IBKR_PASSWORD`) and are rendered into a
+  **tmpfs** config (mode 600) — never persisted to disk or git. Read-only API
+  (the recorder never trades). Unverified until first paper login; manual launch
+  is the proven fallback.
+
+### Recorder
+- Records **L1 + bars only**. L2/market depth is a marked extension point in
+  `recorder.py` (deferred — needs the paid CME depth subscription).
+- `reqRealTimeBars` gives 5-second bars → stored as `bars_5s` and aggregated to
+  `bars_1m` (true 1-second bars aren't available from this API). Session tagged
+  RTH/ETH via an America/New_York 09:30–16:00 window.
+- New settings: `record_symbols` (MES, MNQ), `recorder_client_id` (11, distinct),
+  `recorder_flush_seconds` (30), `roll_calendar_days` (5), `continuous_adjustment`
+  (ratio).
+
 ### Config isolation (`OPTIONS_` prefix) + stale-env cleanup
 - During bootstrap we found the dev machine's shell (`~/.config/fish/conf.d/env.fish`)
   exported global `IBKR_HOST`, `IBKR_PORT=4003`, `IBKR_CLIENT_ID`,
