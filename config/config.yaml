@@ -1,0 +1,25 @@
+# Non-secret configuration defaults.
+#
+# These are layered BELOW environment variables and .env (see config/settings.py),
+# so anything here can be overridden without editing code. Put only NON-SECRET,
+# operationally-tunable values here. Secrets (API keys, tokens) belong in .env.
+#
+# NOTE: the risk limits below are PLACEHOLDERS for Phase 0 — no logic reads them yet.
+
+# Trading mode — locked to "paper". Any other value makes the app refuse to start.
+mode: paper
+
+# Instrument traded in Phase 1 (CME micro futures: MES or MNQ).
+instrument: MES
+
+# IBKR paper connection (IB Gateway paper defaults; TWS paper uses port 7497).
+ibkr_host: 127.0.0.1
+ibkr_port: 4002
+ibkr_client_id: 1
+
+# Risk limits (placeholders — conservative defaults, not wired to any logic yet).
+max_daily_loss_usd: 500.0
+risk_per_trade_usd: 100.0
+max_position_size: 1
+max_concurrent_positions: 1
+max_account_drawdown_pct: 0.10

@@ -1,0 +1,49 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual environment (uv) ---
+.venv/
+venv/
+
+# --- Secrets / config (NEVER commit real credentials) ---
+.env
+.env.*
+!.env.example
+
+# --- Local data store / artifacts (kept as dirs via .gitkeep, contents ignored) ---
+/data/*
+!/data/.gitkeep
+/models/*
+!/models/.gitkeep
+/logs/*
+!/logs/.gitkeep
+
+# --- DuckDB / Parquet local store ---
+*.duckdb
+*.duckdb.wal
+*.parquet
+
+# --- Tooling caches ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+
+# --- Local dev tooling (Serena code-intelligence index; not part of the system) ---
+.serena/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
+*~
+.directory

@@ -1,0 +1,85 @@
+[project]
+name = "options-system"
+version = "0.0.0"
+description = "Autonomous local-first futures-trading system (Phase 1: CME micro futures MES/MNQ; Phase 2: options vertical spreads)."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "Proprietary" }
+authors = [{ name = "Karson" }]
+
+# Pinned exactly for the heavy / compiled / GPU-critical packages (engine, broker,
+# model, torch); compatible floors for the rest. uv.lock holds the full exact set
+# and is the reproducibility source of truth (resolved versions -> docs/DECISIONS.md).
+dependencies = [
+    # --- Engine + broker (paper only) ---
+    "nautilus_trader==1.227.0",
+    "ib_async==2.1.0",
+    # --- Signal model / ML ---
+    "lightgbm==4.6.0",
+    "scikit-learn>=1.5",
+    # --- Data wrangling + local store ---
+    "polars>=1.0",
+    "pandas>=2.3.3,<3.0",
+    "numpy>=1.26.4",
+    "duckdb>=1.0",
+    "pyarrow>=23.0.1",
+    # --- Sentiment (GPU: FinBERT via transformers/torch) ---
+    "torch==2.9.1",
+    "transformers>=5.10",
+    "accelerate>=1.0",
+    # --- Config / logging / plumbing ---
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-dotenv>=1.0",
+    "loguru>=0.7",
+    "pyyaml>=6.0",
+    # --- Observability ---
+    "streamlit>=1.40",
+    "python-telegram-bot>=21.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.9",
+]
+
+# --- Build backend: install src/options_system as an editable package ---
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/options_system"]
+
+# --- PyTorch CUDA build for Blackwell (RTX 5070 Ti, sm_120) ---
+# torch is pulled from the cu128 wheel index (sm_120 supported since cu128).
+# `explicit = true` => this index is used ONLY for torch; everything else
+# (incl. torch's nvidia-*-cu12 deps) resolves from the default PyPI index.
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# --- Ruff (lint + format) ---
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "scripts", "tests", "config"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["options_system", "config"]
+
+# --- Pytest ---
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-q"
+# repo root on path so `from config.settings import Settings` resolves in tests
+pythonpath = ["."]
