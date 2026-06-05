@@ -127,6 +127,31 @@ data is immutable; the continuous (back-adjusted) series is derived on demand.
 Live (IBKR, forward from today) and historical (Databento) land in the *same*
 schema, so they're queried identically.
 
+## Feature layer in detail (Phase 2, implemented)
+
+```
+ store.get_bars(continuous=True)              config/features.yaml
+   (outright front-month, back-adjusted)   →  features/config.py (typed, versioned)
+              │                                         │
+              ▼                                         ▼
+   features/compute.py  ── causal, degree-0 ──▶  features/build.py
+   ~45 price/vol/volume/time/cross-asset       (versioned tables → data/features/,
+   features; trailing windows only             idempotent) + read_features / features_asof
+              │                                         │
+              ▼                                         ▼
+   tests/test_features_leakage.py            observability/features_health.py
+   truncation-invariance proof               (coverage, null rates, degraded)
+```
+
+The defining property: a feature at `t` uses only bars with `ts_event <= t`.
+Price features are **degree-0 in the price scale** (returns/ratios/normalized) so
+they survive ratio back-adjustment — a price *level* on the continuous series
+would secretly encode the future roll. The leakage test rebuilds the series
+point-in-time and proves `feature(full)[t] == feature(truncated)[t]`. Feature
+tables are versioned (`feature_version`), carry `session` and a `degraded` flag,
+and are retrieved leak-free through the store's `asof_join`. Catalog:
+`docs/FEATURES.md`; rationale: `docs/DECISIONS.md` Phase 2.
+
 ## Where each module lives
 
 | Concern | Module | One-liner |

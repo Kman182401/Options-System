@@ -1,0 +1,80 @@
+# Feature-layer configuration (declarative, versioned).
+#
+# Loaded by features/config.py into a typed FeatureConfig. Windows are in
+# BARS (= minutes, since the base series is 1-minute). Everything here is
+# operationally tunable WITHOUT touching code. Bump `feature_version` whenever a
+# change would alter emitted values, so stored feature tables stay self-describing.
+#
+# Leakage rule baked into every choice below: features are causal (trailing
+# windows only) and price-derived features are degree-0 in price scale
+# (returns / ratios / normalized) so they are invariant to ratio back-adjustment.
+# See docs/FEATURES.md (roll-safety column) and docs/DECISIONS.md (Phase 2).
+
+feature_version: "v1"
+
+# Canonical window groups (minutes). Families below reference these sizes.
+windows:
+  short: [5, 15, 30, 60]
+  session: [120, 240, 390]      # ~2h, ~4h, one RTH session (6.5h = 390m)
+  multiday: [1380, 4140]        # ~1 and ~3 CME sessions (23h = 1380m)
+
+returns:
+  horizons: [1, 5, 15, 30, 60]  # log-return lookbacks (bars)
+
+momentum:
+  ema_windows: [12, 26, 60, 120]
+  slope_lookback: 5             # bars used to measure the EMA slope (on log price)
+  macd: [12, 26, 9]             # fast, slow, signal (computed on LOG price)
+  roc_windows: [15, 60]
+  adx_window: 14
+
+mean_reversion:
+  rsi_window: 14
+  bb_window: 20
+  bb_std: 2.0
+  zscore_windows: [30, 120]     # rolling z-score of close
+
+volatility:
+  rv_windows: [15, 60, 390]     # realized vol = std of 1-bar log returns
+  atr_window: 14                # emitted as ATR / close (fraction), never raw points
+  parkinson_window: 30
+  gk_window: 30                 # Garman-Klass
+  regime_window: 60             # current realized vol ...
+  regime_baseline: 1380         # ... over its rolling median (vol regime)
+
+volume:
+  rvol_windows: [30, 390]       # volume / rolling-mean volume
+  tod_baseline_days: 20         # time-of-day seasonal baseline (same minute, past N days)
+  zscore_window: 390            # rolling z-score of volume
+  obv_window: 60                # normalized signed-volume fraction over window
+
+cross_asset:
+  pair: [MES, MNQ]              # features for one symbol may use the other's contemporaneous-or-earlier data
+  ratio_zscore_window: 390      # z-score of the raw front-month price ratio (MNQ/MES)
+  corr_window: 60               # rolling correlation of 1-bar returns
+
+session:
+  tz: America/New_York
+  rth_open_min: 570             # 09:30 ET in minutes-from-midnight
+  rth_close_min: 960            # 16:00 ET
+  session_roll_hour_et: 18      # CME session date rolls at 18:00 ET (trade date = next day)
+
+# Days Databento flagged as reduced-quality during the Phase 1.5 backfill. Any
+# feature row on these dates is marked degraded=true (carried, never dropped).
+degraded_days:
+  - 2020-02-27
+  - 2020-02-28
+  - 2020-06-30
+  - 2021-12-05
+  - 2022-01-02
+  - 2025-09-17
+  - 2025-09-24
+  - 2025-11-28
+  - 2026-03-15
+  - 2026-03-16
+  - 2026-04-10
+
+# News / macro hook — NO data ingested yet. Placeholder so the schema/config has
+# a documented seat for it; the engine builds nothing while disabled.
+news:
+  enabled: false

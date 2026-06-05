@@ -214,3 +214,65 @@ entries short: what was decided, and *why*.
   show databento/api_key)" …`) — **no secret written to `.env` or disk**. To make
   future runs (feature phase, re-backfill) turnkey, add it to `.env` or keep
   bridging from `pass`.
+
+---
+
+## Phase 2 — Feature engineering (2026-06-05)
+
+### The leakage principle (the whole design rests on this)
+- **Every price feature is degree-0 in the price scale** (returns, ratios,
+  z-scores, normalized) — never a raw price/ATR/VWAP **level**. Why: truncating
+  the raw history at `t` and rebuilding the ratio-adjusted continuous series only
+  multiplies the point-in-time series (rows `<= t`) by a single global constant
+  `f_k = ∏ future seam ratios`. A degree-0 feature is invariant to that constant;
+  a level feature scales by `f_k` and so secretly encodes the future roll. This is
+  the "back-adjustment trap" and it is the reason level features are banned here.
+- **Proven, not asserted.** `tests/test_features_leakage.py` rebuilds the
+  continuous series point-in-time (raw bars `<= t` + only rolls `<= t`, exactly
+  like `store.get_bars(continuous=True)`) and asserts
+  `feature(full)[t] == feature(truncated)[t]` for all 45 features, plus a "teeth"
+  test showing a raw level genuinely fails. Tolerance is `1e-4` relative: most
+  features match to ~1e-12; ADX (a long Wilder-EWM chain over `close*f_k`) drifts
+  ~1e-4 from float rounding of the scaling — far below the ~1% a real leak moves.
+
+### Feature set (≈45, interpretable, hand-picked — no kitchen sink)
+- Families: returns, trend/momentum (EMA slope, EMA-distance z, MACD on **log**
+  price, ROC, ADX), mean-reversion (RSI, Bollinger %B, price z-score), volatility
+  (realized vol, ATR%, Parkinson, Garman-Klass, vol-regime), volume (relative
+  volume, **time-of-day-baselined** volume, volume z, normalized signed-volume
+  flow, session-VWAP distance), time/session (sin/cos of minute-of-day &
+  day-of-week, minutes since/to RTH open/close), cross-asset MES↔MNQ (return
+  spread, raw-ratio z-score, return correlation). Full table + roll-safety in
+  `docs/FEATURES.md`. tsfresh / auto-feature-explosion deliberately avoided.
+- **MACD on log price** (not raw) so it stays a difference of log-EMAs → degree-0.
+- **Volume is back-adjustment independent** (back-adj only rewrites prices), so
+  volume features use raw volume; they are normalized against a **time-of-day
+  baseline** (prior-N-days, same minute) because intraday volume is strongly
+  seasonal — otherwise the feature mostly encodes "what time it is".
+- **Cross-asset ratio uses the raw front price** recovered as `close/adj_factor`
+  (the true recorded price, no back-adjustment), since a ratio of two
+  independently-back-adjusted continuous series is NOT invariant. The other
+  symbol is attached by a **backward as-of join** (contemporaneous-or-earlier).
+- **Session-anchored VWAP** resets per CME trade date (overnight session `>= 18:00`
+  ET belongs to the next date); emitted only as `close/VWAP − 1` (a ratio).
+
+### Storage, config, flags
+- **Declarative config** in `config/features.yaml` → typed `FeatureConfig`
+  (`features/config.py`), with a `feature_version` stamped on every row. Windows
+  are in bars (= minutes). A disabled `news` seat is a documented placeholder (no
+  news/macro data ingested — nothing built).
+- Feature tables at `data/features/symbol=…/date=…/` (zstd, idempotent on
+  `ts_event`), **computed over full history** so values never depend on the write
+  window. Retrieval via the DuckDB store + `asof_join` keeps no-look-ahead
+  end-to-end.
+- **`degraded` flag** carried on every row = warmup (row index `< max_window`,
+  4140) OR a Databento-flagged degraded day. Per-feature nulls during their own
+  warmup are kept null — never fabricated. `session` (RTH/ETH) carried too.
+
+### Tooling
+- **No new dependency.** Indicators are Polars-native (full causal control, no
+  TA-Lib C build), spot-checked in tests against independent pandas/NumPy Wilder
+  references (RSI, ATR%, VWAP). All windows trailing; no centered windows, no
+  negative shifts.
+- **Spreads excluded** end-to-end: the engine reads the outright-only continuous
+  series and hard-rejects any `contract_id` containing `-` (tested).
