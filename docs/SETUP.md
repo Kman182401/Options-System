@@ -136,6 +136,26 @@ uv run streamlit run src/options_system/observability/data_health.py
 Per symbol: last-bar age, rows/day, front-month contract, last roll, validation
 status. Read-only over the lake.
 
+### 3.8 Real-time data for live bars (required for `bars_5s`/`bars_1m`)
+The paper account has **delayed** data only, so `reqRealTimeBars` fails with
+**Error 420 — no market-data permissions for CME futures**. L1 quotes
+(`quotes_l1`) still record fine (delayed); only real-time **bars** need a
+subscription. Paper accounts cannot subscribe directly — you subscribe on the
+**live** account and share to paper:
+
+1. Log into the IBKR **Client Portal** with your **live** account (a funded live
+   account is required to host market-data subscriptions).
+2. **Settings → User/Account Settings → Market Data Subscriptions** → add a
+   CME-futures L1 bundle, e.g. **"US Securities Snapshot and Futures Value
+   Bundle"** (NP, includes CME/CBOT/COMEX/NYMEX top-of-book) or **"CME
+   Real-Time (NP, L1)"**. Non-professional rate (~$10/mo; can be commission-waived).
+3. **Enable sharing with paper:** find **"Share real-time market data with the
+   paper trading account"** (live-account setting) and turn it on. *This is the
+   step people miss.*
+4. Wait a few minutes for activation, restart IB Gateway, then re-run the
+   recorder — Error 420 clears and `bars_5s`/`bars_1m` start landing. **No code
+   change needed.**
+
 ---
 
 ## 4. Telegram alerts (optional, later)
