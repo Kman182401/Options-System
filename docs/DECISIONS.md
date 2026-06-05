@@ -276,3 +276,93 @@ entries short: what was decided, and *why*.
   negative shifts.
 - **Spreads excluded** end-to-end: the engine reads the outright-only continuous
   series and hard-rejects any `contract_id` containing `-` (tested).
+
+---
+
+## Phase 3 — Labeling (2026-06-05)
+
+### The target is triple-barrier (not a fixed-horizon return)
+- **Why:** a fixed "return N days out" target ignores that a real defined-risk
+  position is closed at a profit-take, a stop, or a time limit — whichever comes
+  first. Triple-barrier (López de Prado, AFML ch. 3) encodes exactly that: from
+  each event `t0`, first touch of `+pt·σ` → `+1`, `−sl·σ` → `−1`, vertical (time)
+  → `0`. The model learns "is a tradeable `±kσ` move coming within the hold?",
+  which is what the strategy actually cares about. Full method: `docs/LABELING.md`.
+- **Labels ≠ strategy, and labels may look forward — features may not.** The hard
+  invariant enforced here: labels never feed back into features, and **every label
+  records `t1`** (resolution time) so the validation phase (Prompt 4) can
+  purge/embargo overlapping samples. Without `t1` every CV leaks.
+
+### Barriers fixed a priori; class imbalance surfaced, not tuned away
+- **Symmetric ±1.5σ**, vertical = **4140 bars (~3 CME sessions)** — a defined-risk
+  target matching the intraday→3-day style. These are set from a vol/risk
+  rationale **before** any model sees them. Choosing barriers to maximize a
+  backtest is overfitting and is explicitly avoided.
+- Observed balance (full 2019→2026): MES `{+1:0.495, −1:0.469, 0:0.036}`, MNQ
+  `{+1:0.502, −1:0.468, 0:0.031}`. Timeouts are rare (CUSUM fires on momentum → a
+  ±1.5σ move usually resolves within 3 days); mild `+1` skew = the bull drift.
+  Imbalance is **reported** (health view) and handled later at the model stage
+  (class weights / thresholds), never by retuning barriers to balance classes.
+
+### Volatility: causal 1-bar EWM std, √-scaled to a session
+- `σ_scaled = ewm_std(1-bar log returns, span=100) · sqrt(390)`. A clean,
+  testably-causal 1-bar σ scaled by `√H` (H = one RTH session) makes "1σ" a
+  meaningful intraday move. The √H scaling is a fixed-a-priori modelling choice
+  (assumes ~iid bar returns; imperfect intraday but introduces **no look-ahead** —
+  the barriers are a target definition, not a P&L claim). σ sets **both** the
+  barrier width and the CUSUM threshold from one knob.
+
+### Back-adjustment-invariance (same principle as features)
+- Touches are computed on the **real tradeable instrument** in **return/log
+  space**, never on back-adjusted *levels*. We walk the continuous close in
+  cumulative log-return space from `t0`; within a contract that is the raw
+  front-month return, and across a roll the ratio adjustment makes the seam return
+  ≈ 0 (the realistic "rolled position" — the roll spread is a cost, modelled
+  later). Because only return *differences* are used, labels are **degree-0** →
+  invariant to any global price rescale. Proven directly (rescale every price by a
+  constant → identical labels/`t1`/`barrier`/`ret`).
+
+### Roll-crossing windows: handled and flagged, never silently back-adjusted
+- A 3-day hold can span a quarterly roll (~4.6% of labels do). `roll.handling`:
+  **`adjust`** (default) walks the continuous return path through the seam;
+  **`close`** caps at the roll bar (`barrier = roll`). Both **flag**
+  `roll_crossed`. We never compute a touch on naively back-adjusted levels.
+
+### Event sampling: CUSUM (a knob, not a result-chaser)
+- **CUSUM filter** (AFML §2.5.2.1) emits an event only when the cumulative signed
+  return since the last event exceeds `cusum_mult · σ_scaled`, then resets —
+  collapsing noise into the ~10–12k bars that actually moved (vs millions). Far
+  fewer, non-redundant labels. A deterministic `grid` alternative exists. The
+  threshold is set for sensible frequency, never to make labels look good.
+
+### Sample weights from overlap (AFML ch. 4)
+- Concurrency → **average uniqueness** (mean `1/concurrency` over a label's span)
+  → sample weight, optionally × `|return|` (return attribution) and an optional
+  linear **time-decay**, normalized to mean 1.0. Mean avg-uniqueness ≈ 0.23 (labels
+  do overlap, so this matters). Hand-computed references pin the math in tests.
+
+### Right-censoring handled honestly
+- An event whose vertical window runs past the end of available data **and** never
+  touches a price barrier is **dropped**, not resolved early — its outcome is
+  unknown without future bars. Resolving it at the last bar would be a shorter,
+  biased hold.
+
+### Storage / config / hooks
+- Own writer at `data/labels/symbol=…/date=…/` (zstd, idempotent on `t0`),
+  mirroring the features writer rather than extending `lake.DATASETS` — labels are
+  a derived analytic table, not raw market data. Computed over **full history** so
+  values never depend on the write window. `label_version` stamped on every row;
+  all barrier/vol/sampling/weighting params live in `config/labeling.yaml`.
+- `degraded` + `session` inherited from the **feature config** (single source of
+  truth for degraded days), carried through, never dropped.
+- **Meta-labeling hook is structure only:** the schema carries `side` /
+  `meta_label` and `build.apply_meta_labeling` is the reserved API; the secondary
+  act/size model is deferred.
+- **No new dependency** — Polars + NumPy + the existing DuckDB store. The
+  per-event first-touch scan is NumPy (`argmax` on boolean masks); CUSUM is an
+  explicit O(n) recursion (path-dependent, can't vectorize).
+
+### Retrieval stays leak-free
+- `labels_with_features` attaches the as-of feature row at each `t0` via the
+  store's `asof_join` (`feature.ts_event ≤ t0`) — proven by test. A label may look
+  forward; the features attached to it never do.

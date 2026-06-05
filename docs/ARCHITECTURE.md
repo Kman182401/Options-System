@@ -152,6 +152,36 @@ tables are versioned (`feature_version`), carry `session` and a `degraded` flag,
 and are retrieved leak-free through the store's `asof_join`. Catalog:
 `docs/FEATURES.md`; rationale: `docs/DECISIONS.md` Phase 2.
 
+## Label layer in detail (Phase 3, implemented)
+
+```
+ store.get_bars(continuous=True)              config/labeling.yaml
+   (outright front-month, back-adjusted)   →  labeling/config.py (typed, versioned)
+              │                                         │
+              ▼                                         ▼
+   labeling/events.py   causal σ + CUSUM ──▶  labeling/triple_barrier.py
+   (σ_scaled sets barriers + threshold)       first-touch ±kσ / vertical / roll
+              │                                         │  (records t1, roll_crossed)
+              ▼                                         ▼
+   labeling/weights.py  concurrency →        labeling/build.py
+   average-uniqueness sample weights         (versioned tables → data/labels/,
+              │                               idempotent on t0) + labels_with_features
+              ▼                                         │  (features as-of t0, leak-free)
+   tests/test_labeling_*.py                            ▼
+   first-touch / back-adj-invariance /       observability/labels_health.py
+   uniqueness / leak-free-join proofs        (class balance, barrier dist, uniqueness)
+```
+
+The **target**, not trading rules. From each CUSUM-sampled event `t0`, the label
+is the first barrier touched: `+pt·σ` → `+1`, `−sl·σ` → `−1`, vertical → `0`.
+Touches are walked in **cumulative log-return** space on the real front-month
+instrument, so they are degree-0 → back-adjustment-invariant (rescale every price
+→ identical labels, proven). **A label may look forward; the features attached to
+it never do** — and every label records `t1` so the next phase can purge/embargo
+overlap. Labels are versioned (`label_version`), weighted by overlap uniqueness,
+and never leak back into the feature set. Method: `docs/LABELING.md`; rationale:
+`docs/DECISIONS.md` Phase 3.
+
 ## Where each module lives
 
 | Concern | Module | One-liner |
@@ -159,6 +189,7 @@ and are retrieved leak-free through the store's `asof_join`. Catalog:
 | shared plumbing | `common/` | logging, config, shared types |
 | data in + storage | `data/` | IBKR live + historical backfill → DuckDB/Parquet |
 | model inputs | `features/` | leakage-safe, point-in-time features |
+| learning target | `labeling/` | triple-barrier labels (CUSUM events, uniqueness weights) |
 | text sentiment | `sentiment/` | FinBERT (GPU), optional 8B via Ollama |
 | signal model | `models/` | LightGBM train + registry + champion–challenger |
 | decisions | `strategy/` | nautilus Strategy (Claude-researched later) |

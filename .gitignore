@@ -38,6 +38,9 @@ venv/
 # --- Local dev tooling (Serena code-intelligence index; not part of the system) ---
 .serena/
 
+# --- graphify knowledge-graph output (generated, regenerable; not part of the system) ---
+graphify-out/
+
 # --- Jupyter ---
 .ipynb_checkpoints/
 */.ipynb_checkpoints/*

@@ -1,0 +1,50 @@
+# Labeling-layer configuration (declarative, versioned).
+#
+# Loaded by labeling/config.py into a typed LabelConfig. This is the definition
+# of the supervised-learning TARGET (triple-barrier method), NOT trading logic.
+# Everything here is operationally tunable WITHOUT touching code. Bump
+# `label_version` whenever a change would alter emitted labels, so stored label
+# tables stay self-describing.
+#
+# DESIGN RULE baked in: barriers are fixed from a volatility/risk rationale
+# BEFORE any model sees them. Do NOT tune these to make a backtest look good —
+# that is overfitting (see docs/LABELING.md and docs/DECISIONS.md Phase 3).
+
+label_version: "v1"
+
+# --- Volatility estimator (sets barrier width AND the CUSUM threshold) -------
+# σ is causal: EWM std of 1-bar log returns, using only past bars. It is then
+# scaled to a session horizon so a "1σ move" is a meaningful intraday move
+# rather than a one-minute wiggle:  σ_scaled = σ_bar · sqrt(barrier_horizon_bars).
+volatility:
+  ewm_span: 100                # smoothing span for the EWM std of 1-bar log returns
+  min_samples: 100             # warmup: bars required before σ is defined (events before this are dropped)
+  barrier_horizon_bars: 390    # H — scales 1-bar σ to ~one RTH session (6.5h = 390m)
+
+# --- Barriers (multiples of σ_scaled; vertical in bars) ---------------------
+# Symmetric ±1.5σ by default: a defined-risk, regime-adaptive target. Asymmetry
+# is allowed but is a tuning knob to fix a priori, never to optimize on results.
+barriers:
+  pt_mult: 1.5                 # upper (profit-take) barrier = +pt_mult · σ_scaled
+  sl_mult: 1.5                 # lower (stop-loss)  barrier = −sl_mult · σ_scaled
+  max_hold_bars: 4140          # vertical (time) barrier = t0 + 4140 bars (~3 CME sessions of 1380m)
+  vertical_label_sign: false   # timeout label: false → 0; true → sign(realized return at t1)
+
+# --- Event sampling (reduce redundant, overlapping labels to real moves) -----
+events:
+  method: cusum                # cusum (default, López de Prado symmetric filter) | grid
+  cusum_mult: 1.0              # CUSUM threshold h_t = cusum_mult · σ_scaled_t
+  grid_step_bars: 60           # grid alternative: emit an event every k bars
+
+# --- Roll handling for windows that span a contract roll --------------------
+# adjust: walk the back-adjusted continuous return path straight through the
+#   seam (the realistic "rolled position" — the roll itself is ~0 P&L, costs
+#   are modelled later). close: cap the path at the roll bar and resolve there.
+# Either way the label is FLAGGED with roll_crossed=true.
+roll:
+  handling: adjust             # adjust | close
+
+# --- Sample weighting (account for label overlap; AFML ch. 4) ---------------
+weights:
+  scheme: uniqueness           # uniqueness (default) | uniqueness_return (× |realized return|)
+  time_decay: 1.0              # AFML linear decay c ∈ [-1, 1]; 1.0 = no decay (uniform), <1 down-weights old labels
