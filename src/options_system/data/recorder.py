@@ -221,10 +221,12 @@ class Recorder:
             log.info(f"{cid}: {self._counts[cid]} bars, last-bar-age {age:.0f}s")
 
     # ===================== IBKR-connected paths (untested live) ============
-    def _resolve_front(self, symbol: str):
+    async def _resolve_front(self, symbol: str):
         from ib_async import Future
 
-        details = self.ib.reqContractDetails(Future(symbol=symbol, exchange="CME", currency="USD"))
+        details = await self.ib.reqContractDetailsAsync(
+            Future(symbol=symbol, exchange="CME", currency="USD")
+        )
         if not details:
             raise RuntimeError(f"no contract details for {symbol} (market data permissions?)")
         candidates: list[Contract] = []
@@ -240,8 +242,8 @@ class Recorder:
         )
         return ib_by_id[front.contract_id], front.contract_id, front.con_id
 
-    def _subscribe_symbol(self, symbol: str) -> None:
-        ib_contract, contract_id, con_id = self._resolve_front(symbol)
+    async def _subscribe_symbol(self, symbol: str) -> None:
+        ib_contract, contract_id, con_id = await self._resolve_front(symbol)
         self._contract_symbol[contract_id] = symbol
         self._ib_contracts[contract_id] = ib_contract
         log.info(f"{symbol}: front month {contract_id} (conId={con_id})")
@@ -308,7 +310,7 @@ class Recorder:
         )
         log.info(f"connected to {self.settings.ibkr_host}:{self.settings.ibkr_port}")
         for symbol in self.settings.record_symbols:
-            self._subscribe_symbol(symbol)
+            await self._subscribe_symbol(symbol)
 
     async def _main(self) -> None:
         from ib_async import IB
