@@ -1,0 +1,45 @@
+# Validation-layer configuration (declarative, versioned).
+#
+# Loaded by validation/config.py into a typed ValidationConfig. This is the
+# leakage-safe EVALUATION machinery any model is judged by — NOT a model and NOT
+# a strategy. Everything here is operationally tunable WITHOUT touching code.
+# Bump `validation_version` whenever a change would alter how splits/stats are
+# produced, so saved evaluation runs stay self-describing.
+#
+# DESIGN RULE baked in: this framework exists to stop the system fooling itself.
+# Purge + embargo use each label's resolution time t1 so overlapping labels can
+# never leak across the train/test boundary. See docs/VALIDATION.md.
+
+validation_version: "v1"
+
+# --- Purged + embargoed K-fold (AFML ch.7) ----------------------------------
+# Contiguous test folds over t0-sorted samples. Training rows whose [t0,t1]
+# label window overlaps a test fold are PURGED; an EMBARGO drops a further
+# `embargo_pct` of bars immediately after each test fold to kill serial-
+# correlation leakage.
+kfold:
+  n_splits: 6                  # K — number of contiguous test folds
+  embargo_pct: 0.01            # embargo length as a fraction of total bars (ceil)
+
+# --- Combinatorial Purged CV (AFML ch.12) -----------------------------------
+# Split into n_groups contiguous groups, test on every combination of
+# test_groups. Yields C(n_groups, test_groups) splits and C(n_groups-1,
+# test_groups-1) reconstructed out-of-sample PATHS — a distribution of OOS
+# performance instead of one fragile number (matters: avg label uniqueness ~0.23).
+cpcv:
+  n_groups: 6                  # N — contiguous groups (C(6,2)=15 splits, C(5,1)=5 paths)
+  test_groups: 2               # k — groups per test combination (k < n_groups)
+  embargo_pct: 0.01
+
+# --- Walk-forward (sequential, realistic "train past -> test next") ----------
+walk_forward:
+  scheme: anchored             # anchored (train grows from start) | rolling (fixed window)
+  n_splits: 5                  # number of sequential train->test steps
+  min_train_bars: 0            # 0 = let the first split size the initial train block
+  embargo_pct: 0.01
+
+# --- Evaluation (metrics + determinism) -------------------------------------
+evaluation:
+  metrics: [accuracy, auc, weighted_return]   # reported per fold/path
+  primary_metric: weighted_return             # the one summarised across paths (must be in metrics)
+  seed: 7                                      # fixed seed -> identical results

@@ -366,3 +366,73 @@ entries short: what was decided, and *why*.
 - `labels_with_features` attaches the as-of feature row at each `t0` via the
   store's `asof_join` (`feature.ts_event ≤ t0`) — proven by test. A label may look
   forward; the features attached to it never do.
+
+## Phase 4 — Validation framework (the truth-detector)
+
+*Leakage-safe cross-validation + overfitting statistics. Model-agnostic
+infrastructure; no real model, backtest, strategy, risk, execution, or sentiment.*
+
+### Purge + embargo via `t1` (not a convenience — the whole point)
+- Every splitter purges training samples whose `[t0, t1]` label window overlaps a
+  test fold, then applies a forward embargo (`embargo_pct` of total bars). Two
+  intervals overlap iff `t0_i ≤ test_end and t1_i ≥ test_start`. Uses the Phase-3
+  `t1` resolution times — plain K-fold, which ignores `t1`, leaks overlapping
+  labels across the boundary and reports fake skill.
+- The logic lives in exactly **one** primitive (`_purge.train_indices`) shared by
+  purged K-fold, CPCV and walk-forward, checked against a hand-computed reference.
+  Embargo is **forward-only** (purge already covers the overlap/before side);
+  double-applying it would silently shrink the train set.
+
+### CPCV is the workhorse, not a single walk-forward
+- With average label uniqueness ≈ 0.23 a single OOS path is high-variance and easy
+  to fool. CPCV (`N=6, k=2` default → 15 splits, 5 paths) gives a *distribution* of
+  OOS performance. Counts are exact: `C(N,k)` splits, `C(N-1,k-1)` paths, proven by
+  test. Walk-forward (anchored/rolling) is kept as the realistic chronological
+  complement.
+
+### Overfitting statistics are the verdict, accuracy is not
+- **PBO** via CSCV (probability the IS-best config is below the OOS median),
+  **PSR** and **Deflated Sharpe** (deflating for the number of trials), and
+  **minimum track-record length**. A high CV accuracy with PBO→1 or DSR≤0 means we
+  found noise — treat the stats as the gate.
+- **Conventions fixed once, to avoid silent bugs:** all of `SR`/benchmark/skew/
+  kurtosis are per-bar (never mix an annualised Sharpe with per-bar moments);
+  kurtosis is **raw** (Normal = 3, not scipy's excess default); Φ/Φ⁻¹ from
+  `statistics.NormalDist` (no scipy dependency). Each formula is pinned to a
+  closed-form reference value in tests (PSR at the benchmark = 0.5 exactly; Normal
+  denominator = `√(1 + ½·SR²)`; DSR threshold via the Gumbel two-term Euler–
+  Mascheroni form `Φ⁻¹(1 − 1/N)` and `Φ⁻¹(1 − 1/(N·e))`).
+
+### Effective sample size reported everywhere
+- Σ average-uniqueness, per fold and per path. ~11k labels ≈ ~2.7k effective; the
+  raw count overstates the information and must temper trust and model complexity.
+
+### Sample weights honoured in fit and score
+- The harness passes the Phase-3 `weight` column to every `fit` (routed to a
+  pipeline's final step) and weights the accuracy/return metrics. Baselines that
+  need scaling use a `StandardScaler` **inside** a pipeline, so the scaler is fit
+  per training fold (no test-distribution leakage).
+
+### The teeth test is mandatory
+- `tests/test_validation_teeth.py` proves leakage is caught: (a) mechanism — an
+  overlapping train sample is purged while a non-overlapping one is retained; (b)
+  skill collapse — on random-walk forward-return labels (no global predictability)
+  with fold ≤ horizon, a KNN shows inflated OOS skill (~0.78) without purging that
+  collapses to chance (~0.50) with purging + embargo. A framework that can't
+  demonstrate its teeth is theater.
+
+### Baselines must look unskilled on real data
+- The shipped baselines (most-frequent dummy + standardised logistic) are
+  deliberately weak. If a dummy ever looks profitable through this harness,
+  something leaks — that is a stop-and-investigate signal, not a result.
+
+### Storage / config / scope
+- Evaluation runs are saved as JSON under `data/validation/<symbol>.json`
+  (consumed by `observability/validation_health.py`); the matrix is assembled by
+  the labeling layer's already-leak-tested `labels_with_features` (features as-of
+  `t0`). Splits/embargo/CPCV groups/metrics/seed live in `config/validation.yaml`
+  with a `validation_version`; fixed seed → identical results.
+- **No new dependency** — NumPy + Polars + the existing scikit-learn (already a
+  dep) for baselines; `statistics.NormalDist` for Φ/Φ⁻¹.
+- Hyperparameter search is **deferred**; the harness must support it later (search
+  inside the CV, counted as trials for the DSR) but runs none now. No real model.

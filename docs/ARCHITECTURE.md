@@ -182,6 +182,37 @@ overlap. Labels are versioned (`label_version`), weighted by overlap uniqueness,
 and never leak back into the feature set. Method: `docs/LABELING.md`; rationale:
 `docs/DECISIONS.md` Phase 3.
 
+## Validation layer in detail (Phase 4, implemented)
+
+```
+ labels_with_features(symbol)              config/validation.yaml
+   (features@t0 + label + t1 + weight,  →  validation/config.py (typed, versioned)
+    leak-free via store.asof_join)                  │
+              │                                      ▼
+              ▼                          validation/_purge.py  ── purge + embargo (t1) ──┐
+   validation/evaluate.py  ── harness ──▶  purged_kfold.py · cpcv.py · walk_forward.py   │
+   (weighted fit/score, effective N)       (sklearn-compatible splitters)  ◀─────────────┘
+              │                                      │
+              ▼                                      ▼
+   validation/stats.py                     observability/validation_health.py
+   PBO (CSCV) · PSR · DSR · minTRL          (metric distribution, PBO/DSR, effective N)
+              │
+              ▼
+   tests/test_validation_teeth.py — purge severs a leak → skill collapses to chance
+```
+
+The **truth-detector**. It judges any sklearn-compatible estimator through the
+leak-free `(features@t0, y, t1, weight)` matrix, and nothing here trades. Every
+splitter **purges** training samples whose `[t0, t1]` window overlaps a test fold
+and applies a forward **embargo**, using the labeling layer's `t1` — plain K-fold
+leaks overlapping labels and reports fake skill. **CPCV** (`C(N,k)` splits,
+`C(N-1,k-1)` OOS paths) turns one fragile number into a distribution; **PBO / PSR /
+DSR** are the overfitting verdict; scoring honours the uniqueness **weights** and
+reports **effective N** (Σ uniqueness; ~11k labels ≈ ~2.7k effective). The teeth
+test proves purging removes leakage (inflated skill → chance). Baselines look
+unskilled on real data by design. Method: `docs/VALIDATION.md`; rationale:
+`docs/DECISIONS.md` Phase 4.
+
 ## Where each module lives
 
 | Concern | Module | One-liner |
@@ -190,6 +221,7 @@ and never leak back into the feature set. Method: `docs/LABELING.md`; rationale:
 | data in + storage | `data/` | IBKR live + historical backfill → DuckDB/Parquet |
 | model inputs | `features/` | leakage-safe, point-in-time features |
 | learning target | `labeling/` | triple-barrier labels (CUSUM events, uniqueness weights) |
+| honest evaluation | `validation/` | purged/embargoed CV, CPCV, PBO/PSR/DSR (leak-safe) |
 | text sentiment | `sentiment/` | FinBERT (GPU), optional 8B via Ollama |
 | signal model | `models/` | LightGBM train + registry + champion–challenger |
 | decisions | `strategy/` | nautilus Strategy (Claude-researched later) |
