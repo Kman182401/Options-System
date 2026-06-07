@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import polars as pl
 from sklearn.base import clone
 from sklearn.pipeline import Pipeline
 
@@ -101,8 +102,13 @@ def load_matrix(
         raise ValueError(f"no feature columns present for {symbol}; build features first")
     required = ["label", "ret", "weight", "avg_uniqueness", "t1", *feat_cols]
     m = m.sort("t0").drop_nulls(subset=required)
+    # Drop rows with any non-finite feature: degenerate windows (e.g. a z-score with
+    # zero rolling std) can emit ±inf/NaN, which sklearn estimators reject. These are
+    # warmup/degenerate edges, not signal — dropping them keeps the matrix finite.
+    if feat_cols:
+        m = m.filter(pl.all_horizontal(pl.col(c).is_finite() for c in feat_cols))
     if m.is_empty():
-        raise ValueError(f"all rows for {symbol} dropped as null after feature attach")
+        raise ValueError(f"all rows for {symbol} dropped (null/non-finite) after feature attach")
     return Matrix(
         symbol=symbol,
         X=m.select(feat_cols).to_numpy(),
