@@ -128,8 +128,14 @@ def load_matrix(
 def baseline_estimators(seed: int = 0) -> dict[str, Any]:
     """The two deliberately-unskilled baselines: most-frequent dummy + logistic.
 
-    The logistic baseline is wrapped in a standardiser **inside** a pipeline, so the
-    scaler is fit on each training fold only (no test-distribution leakage).
+    Read the baselines' *classification accuracy* as the skill check (it should sit at
+    chance — confirming the harness manufactures no skill from leakage), and **PBO** as
+    the overfit gate. Note that the return-proxy Sharpe/PSR/DSR are drift-sensitive for a
+    directional predictor — a ``most_frequent`` dummy is effectively a constant position
+    and so its return-Sharpe mostly reflects market beta, not skill; those statistics
+    become the meaningful gate once an actual strategy's P&L flows through (Phase 5). The
+    logistic baseline is wrapped in a standardiser **inside** a pipeline, so the scaler
+    is fit on each training fold only (no test-distribution leakage).
     """
     from sklearn.dummy import DummyClassifier
     from sklearn.linear_model import LogisticRegression
