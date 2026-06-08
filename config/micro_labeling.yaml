@@ -1,0 +1,59 @@
+# Short-horizon (micro) labeling configuration — declarative, versioned.
+#
+# Loaded by microstructure/label_config.py into a typed MicroLabelConfig. This is
+# the INTRADAY sibling of config/labeling.yaml: the same López de Prado
+# triple-barrier method, re-scaled from the ~3-day daily horizon to a 30-minute
+# intraday horizon, and run on the microstructure DOLLAR BARS (not the 1-min price
+# bars). It defines the supervised-learning TARGET, NOT trading logic.
+#
+# Bump `micro_label_version` whenever a change would alter emitted labels, so
+# stored label tables stay self-describing (they live in their own lake,
+# data/micro_labels/, isolated from the daily data/labels/).
+#
+# DESIGN RULE (anti-snooping, baked in): every parameter below is fixed A PRIORI,
+# before any model sees the labels. Do NOT tune these to chase a nicer label
+# balance or more events — that is data-snooping (see docs/MICRO_LABELING.md and
+# docs/DECISIONS.md). The RTH session boundary (09:30-16:00 ET) is NOT defined
+# here; it is reused from config/microstructure.yaml's `session` block.
+
+micro_label_version: "ml1"
+
+# --- Volatility estimator (sets barrier width AND the CUSUM threshold) -------
+# σ is causal: EWM std of per-bar MID log returns, using only bars at/before t0.
+# Dollar bars carry ~equal variance per bar, so the 30-min variance is
+# (bars per 30 min) · (per-bar variance). The bar rate is estimated causally from
+# the EWMA of bar duration_s, so:  σ_H = σ_bar · sqrt(vertical_seconds / dur_ewma).
+volatility:
+  ewm_span: 100        # smoothing span for the EWM std of per-bar mid log returns
+  min_samples: 30      # warmup: bars required before σ is defined (resets each RTH session)
+  dur_ewm_span: 100    # smoothing span for the EWMA of bar duration_s (the causal bar-rate)
+
+# --- Barriers (multiples of σ_H; vertical in wall-clock minutes) -------------
+# Symmetric ±1.5σ, mirroring the daily labels' multiplier for consistency. The
+# vertical barrier is 30 minutes of WALL-CLOCK time (mapped to the first bar whose
+# close ts_event ≥ t0 + 30min — NOT a fixed bar count, since dollar-bar durations
+# vary). Every barrier evaluation is additionally hard-capped at the RTH session
+# close, and events in the final 30 min of each session are excluded so no label
+# can cross the session close.
+barriers:
+  pt_mult: 1.5             # upper (profit-take) barrier = +pt_mult · σ_H
+  sl_mult: 1.5             # lower (stop-loss)  barrier = −sl_mult · σ_H
+  vertical_minutes: 30.0   # vertical (time) barrier = t0 + 30 min wall-clock
+  vertical_label_sign: false  # vertical/close label: false → 0; true → sign(realized return at t1)
+
+# --- Event sampling (reduce redundant, overlapping labels to real moves) -----
+# Symmetric CUSUM on per-bar mid log returns (independent of the OFI features, so
+# labels are not circular with the order-flow signal we will test). The threshold
+# h_t = cusum_mult · σ_H,t mirrors the daily config (cusum_mult=1.0): an event
+# fires when the cumulative move since the last event reaches one 30-min vol.
+events:
+  method: cusum            # cusum (default, López de Prado symmetric filter) | grid
+  cusum_mult: 1.0          # CUSUM threshold h_t = cusum_mult · σ_H,t
+  grid_step_bars: 60       # grid alternative: emit an event every k bars
+
+# --- Sample weighting (account for label overlap; AFML ch. 4) ---------------
+# Average uniqueness from concurrent-label overlap. Effective N (≈ sum of
+# uniqueness) is reported per symbol to size the next data pull.
+weights:
+  scheme: uniqueness       # uniqueness (default) | uniqueness_return (× |realized return|)
+  time_decay: 1.0          # AFML linear decay c ∈ [-1, 1]; 1.0 = no decay (uniform)

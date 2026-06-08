@@ -603,3 +603,53 @@ honest null is informative.
   what the framework exists to expose — and argues *against* leakage (a leak would
   inflate OOS accuracy, not depress it). New deps: **none**. Out of scope and not
   built: news/sentiment, microstructure, backtest, strategy, risk, execution.
+
+## Phase 8 — Short-horizon (micro) labeling (2026-06-08)
+
+Triple-barrier labels (`micro_label_version = ml1`) on the `m1` dollar bars — the
+intraday sibling of the daily `v1` labels. Additive and isolated: own config
+(`config/micro_labeling.yaml`), own module (`microstructure/labels.py`), own lake
+(`data/micro_labels/`). The daily labels, price/macro/OFI features, and the
+validation framework are untouched. No model, no verdict, no Databento spend —
+that is the next prompt. See `docs/MICRO_LABELING.md`.
+
+### Reuse vs new (don't rebuild the leak-safe primitives)
+- **Reused unchanged** (imported): `labeling.events.cusum_events` (symmetric CUSUM)
+  and `labeling.weights.sample_weights` (concurrency → average uniqueness → effective N).
+- **New**, because dollar bars are not time-uniform and a short horizon has a
+  session-close trap the daily layer never faces: a σ estimator scaled to a
+  *wall-clock* horizon, a *wall-clock* 30-min vertical barrier, and the session-close
+  guards. The first-touch scan mirrors the daily `label_events` argmax logic exactly.
+
+### Label design — fixed a priori (anti-snooping)
+- **σ_H = σ_bar · sqrt(vertical_seconds / EWMA(duration_s))** — causal EWM std of
+  per-bar mid log returns, scaled to 30 min by the *causally-estimated* bars-per-30min
+  (dollar bars carry ~equal variance per bar). Direct generalization of the daily
+  `σ_bar · sqrt(barrier_horizon_bars)` to variable-duration bars. Stable on the slice.
+- **±1.5σ** horizontal (mirrors daily), **30-min wall-clock vertical** (first bar with
+  `ts_event ≥ t0+30min`, not a bar count), **CUSUM `cusum_mult = 1.0`** on mid returns
+  (independent of OFI, so labels aren't circular with the signal under test).
+- **Session-close handling (the key guard).** Everything is computed per
+  `(contract_id, ET-date)` block → a label can never read the next session. Plus a
+  final-30-min event exclusion and a hard cap at the 16:00-ET close
+  (`barrier_touched = "close"`). RTH boundary reused from `microstructure.yaml`, not
+  redefined.
+
+### QA on the 5-RTH-day slice (2026-05-18→22) — sizes the next data pull
+- ES: 109 events → 101 labels, balance +/−/0 = 0.13/0.09/0.78, hold ≈30 min,
+  avg uniqueness 0.60, **effective N 60.8 (~12.2/RTH day)**.
+- NQ: 95 events → 89 labels, balance 0.11/0.11/0.78, avg uniqueness 0.67,
+  **effective N 59.3 (~11.9/RTH day)**.
+- **Honest notes**: labels skew ~78 % to the timeout (`0`) class (±1.5σ is wide vs the
+  typical post-event 30-min move) — reported, **not** tuned away. `resolved_at_close`
+  is 0 on this liquid slice (the cap never binds). At ~12 effective labels/RTH day,
+  reaching ~1,000 effective labels/symbol implies **~80 RTH days (~4 months)** of
+  MBP-1 bars — the number that should size the Prompt 9 pull.
+
+### Verification
+- Leakage teeth (invariant past `t1`; a peek-one-past value flips → teeth; PIT
+  truncation reproduces, inside-window truncation changes), session-boundary
+  (no label crosses the close, final-30-min excluded, next-session perturbation
+  leaves this session byte-identical), σ causality, determinism + price-scale
+  invariance. Full `pytest` green, ruff/format/ty clean, QA logged to MLflow
+  (`micro-labels`). New deps: **none**.
