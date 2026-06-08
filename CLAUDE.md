@@ -41,7 +41,7 @@ Python 3.12 (uv) · ib_async · nautilus_trader · lightgbm · polars/pandas · 
 
 ## Feature layers (versioned, isolated, additive)
 - `feature_version=v1` — price features (1-min bars). `macro_feature_version` — macro/event layer. `microstructure_feature_version=m1` — order-flow/OFI on **dollar bars** from CME L2 data, separate `data/micro_bars/` table; see `docs/MICROSTRUCTURE.md`.
-- **Databento cost is real money, billed per byte.** Always `metadata.get_cost`/`get_billable_size` (free) BEFORE any `get_range`/`to_file`. Microstructure ingest is gated by `databento_budget_usd_cap` (estimate→cap→abort). Key in `pass` (`databento/api_key_2` live, `databento/api_key` original/depleted), never `.env`. MBP-1 (top-of-book) now; MBP-10 (multi-level OFI) is a later escalation.
+- **Databento cost is real money, billed per byte.** Always `metadata.get_cost`/`get_billable_size` (free) BEFORE any `get_range`/`to_file`. Microstructure ingest is gated by `databento_budget_usd_cap` (estimate→cap→abort). Key in `pass` (`databento/api_key_2` live; original `databento/api_key` removed 2026-06-08 after depletion; `databento/api_key_3` reserved for next backup — `pass insert` it, no code change), never `.env`. MBP-1 (top-of-book) now; MBP-10 (multi-level OFI) is a later escalation.
 
 ## How to run
 - Install: `uv sync`

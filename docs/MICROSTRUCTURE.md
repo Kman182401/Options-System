@@ -48,8 +48,10 @@ So `config/microstructure.yaml` sets a hard **`databento_budget_usd_cap`**
 4. without `--confirm`, only estimates and prints — nothing is downloaded.
 
 The API key is sourced securely (never written to `.env`, never committed): from
-`Settings` if present, else from the `pass` store (`databento/api_key_2`, then
-`databento/api_key`).
+`Settings` if present, else from the `pass` store (`databento/api_key_2` (live),
+then `databento/api_key_3` (reserved backup slot — `pass insert` it when the live
+key is depleted)). The original `databento/api_key` ran out of credits and was
+removed 2026-06-08.
 
 ## Dollar bars (the sampling clock)
 

@@ -192,12 +192,13 @@ Not needed for Phase 0; documented so it's ready when we get there.
 Unify history with the live recording by backfilling CME data into the same
 lake. The free Databento plan includes ~$125 of credit.
 
-The key lives in `pass` at `databento/api_key`. Either add it to `.env`
-(`OPTIONS_DATABENTO_API_KEY=db-...`) for turnkey runs, or bridge it from `pass`
-into the process env for a single command (keeps the secret off disk):
+The live key lives in `pass` at `databento/api_key_2` (the original
+`databento/api_key` ran out of credits and was removed 2026-06-08). Either add it
+to `.env` (`OPTIONS_DATABENTO_API_KEY=db-...`) for turnkey runs, or bridge it from
+`pass` into the process env for a single command (keeps the secret off disk):
 
 ```fish
-set -lx OPTIONS_DATABENTO_API_KEY (pass show databento/api_key)
+set -lx OPTIONS_DATABENTO_API_KEY (pass show databento/api_key_2)
 ```
 
 1. **Dry-run** (prints estimated cost, downloads nothing — *always do this
