@@ -1,0 +1,73 @@
+# Signal-model configuration (declarative, versioned).
+#
+# Loaded by models/config.py into a typed ModelConfig. This describes the
+# Phase-5 directional signal model and the HONEST evaluation that judges it —
+# it is NOT a strategy and NOT an economic backtest. Everything here is tunable
+# WITHOUT touching code. Bump `model_version` whenever a change would alter the
+# fitted model or the reported numbers, so saved runs stay self-describing.
+#
+# DESIGN RULE baked in (see docs/MODEL.md): effective N is only ~2.5-2.7k vs 45
+# features, so the model is constrained HARD — the goal is a model that *cannot*
+# overfit, not one that maximises in-sample accuracy. Every hyperparameter search
+# config is a TRIAL and is counted for the Deflated Sharpe Ratio.
+
+model_version: "v1"
+
+# --- Directional target -----------------------------------------------------
+# Triple-barrier labels are {-1, 0, +1}. The 0 (vertical-timeout) class is tiny
+# (~3-4%). We model DIRECTION (up vs down); timeout rows are folded in by the
+# SIGN of their realised return at t1 (no information discarded) — or dropped.
+target:
+  timeout_handling: sign_return   # sign_return | drop
+
+# --- LightGBM base params (deliberately, heavily regularised) ----------------
+# Shallow trees, large leaves, L1+L2, sub-1 bagging/feature fractions. n_estimators
+# is an UPPER BOUND; early stopping (below) trims it inside each CV fold.
+lgbm:
+  n_estimators: 600
+  learning_rate: 0.02
+  max_depth: 3                # shallow
+  num_leaves: 7              # <= 2^max_depth - 1
+  min_child_samples: 200     # large leaves => heavy smoothing
+  subsample: 0.7             # bagging fraction < 1
+  subsample_freq: 1
+  colsample_bytree: 0.6      # feature fraction < 1
+  reg_alpha: 1.0             # L1
+  reg_lambda: 5.0            # L2
+  min_split_gain: 0.0
+  max_bin: 127
+
+# --- Early stopping (INSIDE each CV training fold) ---------------------------
+# A purged chronological tail of the training fold is the early-stopping
+# validation set; training rows whose [t0,t1] overlap that tail are PURGED, so
+# there is no test-fold (or inner-val) leakage. Disable to use n_estimators flat.
+early_stopping:
+  enabled: true
+  rounds: 50
+  inner_val_fraction: 0.2
+
+# --- Hyperparameter search (SMALL, regularisation-focused) -------------------
+# Every grid config is a trial. n_trials = product of the grid sizes and is fed
+# to the Deflated Sharpe Ratio. Keep it tiny: with ~2.5k effective samples, more
+# trials only inflate overfitting risk. Selection is on pooled OOS weighted
+# directional accuracy (no test-fold peeking — see models/tune.py).
+search:
+  enabled: true
+  selection_metric: directional_accuracy   # directional_accuracy | excess_sharpe
+  grid:
+    max_depth: [2, 3]
+    min_child_samples: [100, 300]
+    reg_lambda: [5.0, 20.0]
+  # => 2*2*2 = 8 configs, so n_trials = 8.
+
+# --- VERDICT thresholds (an edge must clear ALL of these, beta-netted) --------
+# Skill is reported OVER AND ABOVE market beta: the return metric is EXCESS over a
+# perma-long benchmark, and the directional accuracy must beat chance by a margin.
+verdict:
+  min_directional_accuracy: 0.52   # pooled OOS weighted accuracy vs 0.50
+  max_pbo: 0.5                     # selection not overfit (PBO -> 0 is robust)
+  min_excess_dsr: 0.5              # Deflated Sharpe of EXCESS-over-long returns
+  require_positive_excess: true    # mean excess-over-long return > 0
+
+# --- Determinism ------------------------------------------------------------
+seed: 7

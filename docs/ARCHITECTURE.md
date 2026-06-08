@@ -213,6 +213,42 @@ test proves purging removes leakage (inflated skill → chance). Baselines look
 unskilled on real data by design. Method: `docs/VALIDATION.md`; rationale:
 `docs/DECISIONS.md` Phase 4.
 
+## Signal model in detail (Phase 5, implemented)
+
+```
+ labels_with_features(symbol)              config/models.yaml
+   (features@t0 + label + t1 + weight)  →  models/config.py (typed, versioned)
+              │                                      │
+              ▼                                      ▼
+   models/dataset.py  ── fast as-of attach ──▶  models/lgbm.py
+   (DuckDB projection + polars join_asof;        regularized LightGBM directional
+    seconds not minutes; y_dir ∈ {-1,+1})        classifier (weight-aware, seeded)
+              │                                      │
+              ▼                                      ▼
+   models/tune.py  ── in-CV grid (n_trials) ──▶ models/evaluate_model.py
+   (purged K-fold; no test-fold peeking)         CPCV · PBO · trial-deflated DSR
+              │                                   skill OVER BETA → VERDICT
+              ▼                                      │
+   models/interpret.py (SHAP)                       ▼
+   global + local; dominance/leak check     models/run.py → MLflow (data/mlruns)
+                                             + observability/model_health.py (read-only)
+```
+
+The **honest-verdict** layer. It assembles the leak-free `(features@t0, y_dir, t1,
+weight)` matrix **fast** (a pushed-down DuckDB read + a polars `join_asof` replace
+the ~30-min full-lake scan — exact same arrays, seconds), trains a *deliberately
+under-powered* LightGBM (it can't overfit ~2.5k effective samples), tunes a tiny
+grid **inside** the purged CV (trials counted), and judges the result **only**
+through Phase-4's machinery — PBO, **trial-deflated** DSR, CPCV path distribution —
+reporting skill **over and above market beta** (excess over a perma-long benchmark),
+never raw return. Output is one explicit **VERDICT** per symbol. SHAP explains the
+drivers and flags leakage smells; the run is logged to a local MLflow file store and
+surfaced read-only. **Current verdict: no significant edge (MES, MNQ)** — price-only
+intraday direction does not beat beta after deflation, which (honestly) routes us to
+better data/features before any strategy. Nothing here trades, backtests
+economically, or promotes a model. Method + verdict: `docs/MODEL.md`; rationale:
+`docs/DECISIONS.md` Phase 5.
+
 ## Where each module lives
 
 | Concern | Module | One-liner |
@@ -223,7 +259,7 @@ unskilled on real data by design. Method: `docs/VALIDATION.md`; rationale:
 | learning target | `labeling/` | triple-barrier labels (CUSUM events, uniqueness weights) |
 | honest evaluation | `validation/` | purged/embargoed CV, CPCV, PBO/PSR/DSR (leak-safe) |
 | text sentiment | `sentiment/` | FinBERT (GPU), optional 8B via Ollama |
-| signal model | `models/` | LightGBM train + registry + champion–challenger |
+| signal model | `models/` | regularized LightGBM directional signal + honest CPCV/PBO/DSR verdict (registry/champion–challenger deferred) |
 | decisions | `strategy/` | nautilus Strategy (Claude-researched later) |
 | safety | `risk/` | sizing, caps, kill-switch, broker-side stops |
 | orders | `execution/` | nautilus live node → ib_async → IBKR paper |

@@ -17,6 +17,11 @@ dependencies = [
     # --- Signal model / ML ---
     "lightgbm==4.6.0",
     "scikit-learn>=1.5",
+    "shap==0.52.0",       # Phase 5: SHAP interpretability (TreeExplainer)
+    # numba/llvmlite are shap's accel backend; modern floors stop the resolver
+    # backtracking onto a pre-3.12 llvmlite (build fails on Python 3.12).
+    "numba>=0.60",
+    "llvmlite>=0.43",
     # --- Data wrangling + local store ---
     "polars>=1.0",
     "pandas>=2.3.3,<3.0",
@@ -38,6 +43,8 @@ dependencies = [
     # --- Observability ---
     "streamlit>=1.40",
     "python-telegram-bot>=21.0",
+    # --- Experiment tracking (Phase 5: local MLflow file store, no cloud) ---
+    "mlflow==3.13.0",
 ]
 
 [dependency-groups]

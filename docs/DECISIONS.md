@@ -436,3 +436,89 @@ infrastructure; no real model, backtest, strategy, risk, execution, or sentiment
   dep) for baselines; `statistics.NormalDist` for Φ/Φ⁻¹.
 - Hyperparameter search is **deferred**; the harness must support it later (search
   inside the CV, counted as trials for the DSR) but runs none now. No real model.
+
+---
+
+## Phase 5 — Signal model & honest edge verdict (2026-06-08)
+
+The whole phase answers ONE question — *does a model beat chance on the label,
+after deflation, over and above beta?* — and the only acceptable failure mode is a
+**fake** edge. Choices are pointed at not manufacturing one. Verdict + method:
+`docs/MODEL.md`.
+
+### Fast training matrix (fix the ~30-min load)
+- `models/dataset.py` replaces the full-lake materialisation with a **pushed-down
+  DuckDB read** (project only `ts_event` + the 45 features, dedup latest-ingest via
+  `QUALIFY`) followed by a **polars `join_asof`** (backward, `<= t0`). ~2.5M feature
+  rows assemble in **~3s** (was minutes); a version-keyed parquet cache makes a
+  re-load ~0.05s. Proven **byte-identical** to Phase-4's `load_matrix` on a bounded
+  window (every array equal), so it inherits the already-leak-tested guarantee.
+- **Why not a single DuckDB `ASOF JOIN`?** It must sort/materialise the 2.5M-row
+  right side inside the join → *minutes*. The projection + merge-asof split is the
+  fast, exact equivalent. A nested `SELECT *` also defeats DuckDB's column pushdown
+  — the explicit projection is load-bearing.
+
+### Directional target (handle the timeout class)
+- Labels are `{-1,0,+1}`; the vertical-timeout `0` (~3-4%) is folded into a
+  **direction** by the **sign of its realised return** at `t1` (`sign_return`,
+  default) — no rows dropped, weights/normalisation untouched. `drop` is the
+  documented alternative. The model predicts up/down so `predict()` IS the trading
+  sign and `predict_proba` is a calibrated up-probability (not thresholded here).
+  Class imbalance is handled by **weights, never by altering labels**.
+
+### A model that *can't* overfit (effective N ~2.5-2.7k vs 45 features)
+- Hard regularisation in `config/models.yaml`: shallow trees (`max_depth 3`,
+  `num_leaves 7`), large leaves (`min_child_samples ≥ 100`), L1+L2, sub-1
+  bagging/feature fractions, and **early stopping inside each CV fold against a
+  *purged* chronological tail** (no inner-val leakage). Deterministic: fixed seeds,
+  single-threaded, `deterministic=True` → byte-reproducible. Goal is the *least*
+  overfit model, not the highest in-sample accuracy.
+
+### Tuning is in-CV and counts as trials
+- A small **2×2×2** grid (`max_depth`/`min_child_samples`/`reg_lambda`, 8 configs)
+  runs **inside** the purged K-fold; selection is on pooled OOS weighted directional
+  accuracy — no config sees its own test fold. `n_trials = 8` deflates the DSR and
+  the 8 configs feed PBO. Kept tiny on purpose: more trials only inflate overfit
+  risk at this effective N.
+
+### Skill is reported OVER AND ABOVE beta
+- The return metric is the **excess over a perma-long benchmark**
+  (`excess = (position − 1)·ret`, information-ratio style); PSR/DSR are computed on
+  that excess. A perma-long model has zero excess → no edge, however much beta it
+  rode. This is the netting the Phase-4 note flagged (a long dummy's PSR is pure
+  beta). PBO is computed on the strategy-return matrix across the 8 configs.
+- **Evaluated ONLY through `validation/`.** `evaluate_model.py` composes the
+  existing splitters (`PurgedKFold`, `CombinatorialPurgedCV`) and stats
+  (PBO/PSR/DSR) — it adds *zero* leakage logic, only the beta-netting and the
+  trial-deflation the harness deferred to this phase.
+
+### The VERDICT is an explicit AND
+- *edge* requires **all** of: directional accuracy `> 0.52`, PBO `< 0.5`, excess
+  **DSR** `> 0.5`, positive mean excess-over-long. Miss one → *no significant edge*.
+  Raw accuracy is intentionally the weakest gate. Thresholds are config, the checks
+  are recorded per run, and a null result is reported **without massaging** — the
+  unacceptable outcome is a fake edge, not an honest "no edge yet".
+
+### Result (full history): no significant edge on MES or MNQ
+- Both lose to buy-and-hold (strategy SR < long-only SR), excess DSR ≈0, CPCV excess
+  Sharpe negative on every path, PBO 0.70-0.83. MNQ's accuracy nudges past chance
+  (0.527) but fails the other three gates. **This routes us to better data/features
+  (the deferred macro/sentiment layer) before any strategy** — see `docs/MODEL.md`.
+
+### Interpretability + tracking
+- **SHAP** (TreeExplainer) global + local, refit on full history for explanation
+  only (not a perf number). Importance is spread thin (top-feature share ~7%, no
+  dominance) → consistent with the null and free of leakage smells. Drivers are
+  economically plausible (vol, momentum, flow, cross-asset).
+- **MLflow local file store** under `data/mlruns` (no cloud, no server). MLflow 3
+  put the file store in "maintenance mode", so we set `MLFLOW_ALLOW_FILE_STORE=true`
+  to keep it deliberately. `observability/model_health.py` is a read-only view over
+  the saved JSON (same payload logged to MLflow).
+
+### Storage / deps / scope
+- Runs → `data/models/runs/<symbol>.json` (+ SHAP PNG); matrix cache →
+  `data/models/cache/`; MLflow → `data/mlruns` (all gitignored). New deps pinned:
+  `shap==0.52.0`, `mlflow==3.13.0` (+ `numba`/`llvmlite` floors so the resolver
+  doesn't backtrack onto a pre-3.12 `llvmlite`). Out of scope this phase and **not**
+  built: nautilus economic backtest, strategy/entry-exit, risk, execution, the
+  registry/champion-challenger **promotion** pipeline, live retraining, sentiment.
