@@ -46,8 +46,8 @@ def run_symbol(
     mcfg = mcfg or ModelConfig.load()
     vcfg = vcfg or ValidationConfig.load()
 
-    logger.info(f"[{symbol}] assembling matrix")
-    tm = load_training_matrix(symbol)
+    logger.info(f"[{symbol}] assembling matrix (timeout={mcfg.target.timeout_handling})")
+    tm = load_training_matrix(symbol, timeout_handling=mcfg.target.timeout_handling)
     logger.info(
         f"[{symbol}] n={tm.n} eff_n={tm.uniqueness.sum():.0f} — "
         f"searching ({mcfg.search.n_trials} trials)"
