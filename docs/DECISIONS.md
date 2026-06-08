@@ -522,3 +522,84 @@ after deflation, over and above beta?* — and the only acceptable failure mode 
   doesn't backtrack onto a pre-3.12 `llvmlite`). Out of scope this phase and **not**
   built: nautilus economic backtest, strategy/entry-exit, risk, execution, the
   registry/champion-challenger **promotion** pipeline, live retraining, sentiment.
+
+---
+
+## Phase 6 — Macro / economic-event layer + re-verdict (2026-06-08)
+
+Price-only features were exhausted (Phase 5 null). Per the pre-registered plan we
+add a **macro / economic-event** feature layer and re-run the **identical** verdict
+— same labels, same framework, same gates, **inputs only changed**. Method +
+comparison: `docs/MACRO.md`. The unacceptable outcome is a *fake* edge; a second
+honest null is informative.
+
+### Source: FRED/ALFRED first-print, free, key-gated (verified live)
+- **First-print via `output_type=4`** ("Observations, Initial Release Only"). Each
+  observation's `realtime_start` is its publication date; `event_time` = that date
+  @ the standard release clock (08:30 ET data, 14:00 ET FOMC) → UTC. A later
+  revision would leak the future. **Verified live**: June-2024 CPI first-print
+  313.049, release 2024-07-11 (the real BLS date); first 2022 hike 0.25→0.50.
+- `output_type=4` **requires an explicit ALFRED real-time window**
+  (`realtime_start=2000-01-01`, `realtime_end=9999-12-31`); the default (today
+  only) 400s with "no vintage dates exist for the specified real-time period".
+- **`DFEDTARU` (FOMC rate) uses standard (latest) observations, not `output_type=4`**
+  — a daily series has >2000 ALFRED vintages (the file-type cap), and the target
+  rate is **never revised**, so latest == first-print; read only as-of a meeting.
+- **Network = stdlib `urllib`** (no new dependency; `requests`/`httpx` are only
+  transitive). **Key-gated**: with `OPTIONS_FRED_API_KEY` unset, ingestion no-ops
+  with a clear message. The key lives in `pass` at `fred/api_key` and is bridged
+  into the process env per-command — never written to `.env`/disk. New typed
+  surface `Settings.fred_api_key: SecretStr | None`.
+
+### Event set + honest exclusions
+- CPI, Core CPI, PCE, Core PCE, NFP, unemployment, initial claims, GDP (advance),
+  advance retail sales, PPI (final demand), and **FOMC**. Series ids + clock times
+  in `config/macro.yaml`.
+- **ISM manufacturing & services EXCLUDED**: ISM data was **removed from FRED on
+  2016-06-24** over a licensing dispute → not available from this free source. Not
+  fabricated. Documented.
+- **`surprise` is null**: FRED has no consensus/expectations series; we never
+  fabricate one. The outcome feature is `actual_pit − prior` (change vs the prior
+  first-print), not a surprise.
+- **FOMC = scheduled meetings only** (8/yr; decision dates verified against
+  federalreserve.gov FOMC calendars). **Intermeeting emergency actions excluded**
+  (not knowable in advance): March-2020 COVID cuts, the 2019-10-11 balance-sheet
+  note; Jackson Hole symposiums are not meetings. Calendared March-2020 = 2020-03-18.
+
+### The timing-vs-outcome leakage rule (the whole game)
+- **Timing features look forward at the public schedule** (`event_time` only) —
+  "minutes-to-next-CPI/FOMC" is legitimately known ahead. **Outcome features index
+  strictly backward** (`event_time <= t0`). Proven by
+  `tests/test_macro_features_leakage.py`: outcomes invariant to hiding future
+  outcomes; timing invariant to blanking outcomes; and a **teeth** variant — a
+  deliberately forward outcome look-up *is* caught by the same backward-invariance
+  check, so a real leak could not slip past.
+- **Caveat documented**: data-release "next" dates come from the ingested release
+  series (FRED only carries past releases); fine for all but the final release
+  month (where "minutes-to-next" is NaN). FOMC has an explicit forward calendar.
+
+### Storage + integration (compute-at-`t0`, not a stored grid)
+- `macro_events` lake table at `data/macro_events/date=…/` — own idempotent writer
+  (key `(event_type, event_time)`), **partitioned by date only, no symbol** (macro
+  context is instrument-independent; mirrors the Phase-3 labels decision to not
+  extend `lake.DATASETS`).
+- Macro features are computed **directly at the label `t0`s** (timing is closed-form
+  from the schedule, outcomes a backward look-up over a tiny event table) and
+  `hstack`ed onto the matrix — no 2.5M-row stored macro grid, and it generalises to
+  the live engine. `macro_feature_version` stamps the matrix + cache key; price
+  `feature_version` stays `v1` (clean controlled experiment).
+- **Row count unchanged (10,827 / 11,688)**: the null/non-finite **row gate stays
+  on the price features**; macro columns may be `NaN` where undefined, which
+  LightGBM handles natively. `with_macro=False` reproduces the Phase-5 price-only
+  matrix byte-for-byte (the parity test pins this).
+
+### Result: still no significant edge (MES, MNQ)
+- Verdict **unchanged** on both. MES price+macro accuracy dipped *below* chance
+  (0.498) and excess Sharpe worsened; MNQ barely moved (PBO 0.70→0.52 borderline)
+  but excess-over-beta stays negative and excess DSR ≈0. All four gates still fail.
+- **SHAP**: macro features **dominate** importance (~66–69 % of total; top drivers
+  `macro_chg_ppi/cpi/core_cpi`, `macro_mins_since_nfp/pce`), no single-feature
+  dominance, no leakage smell. High in-sample reliance + null OOS skill is exactly
+  what the framework exists to expose — and argues *against* leakage (a leak would
+  inflate OOS accuracy, not depress it). New deps: **none**. Out of scope and not
+  built: news/sentiment, microstructure, backtest, strategy, risk, execution.

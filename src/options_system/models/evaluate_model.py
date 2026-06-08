@@ -219,9 +219,12 @@ def evaluate_model(
         "feature_version": tm.feature_version,
         "label_version": tm.label_version,
         "validation_version": vcfg.validation_version,
+        "macro_feature_version": tm.macro_feature_version,
+        "with_macro": tm.with_macro,
         "timeout_handling": tm.timeout_handling,
         "n_samples": tm.n,
         "n_features": len(tm.feature_cols),
+        "n_macro_features": len(tm.macro_cols),
         "effective_n_total": round(float(tm.uniqueness.sum()), 2),
         "n_trials": search.n_trials,
         "selection_metric": search.selection_metric,
@@ -241,19 +244,28 @@ def _runs_dir() -> Path:
     return Path(Settings().data_dir) / "models" / "runs"
 
 
-def save_model_run(summary: dict[str, Any], *, runs_dir: Path | None = None) -> Path:
-    """Persist one model-evaluation summary as JSON under ``data/models/runs/<symbol>.json``."""
+def save_model_run(
+    summary: dict[str, Any], *, runs_dir: Path | None = None, suffix: str = ""
+) -> Path:
+    """Persist one model-evaluation summary as JSON under ``data/models/runs/``.
+
+    The canonical price+macro run is ``<symbol>.json`` (``suffix=""``); the
+    price-only baseline is saved under ``<symbol>_price_only.json`` so the Phase-6
+    comparison keeps both side by side (model_health reads ``<symbol>.json``).
+    """
     d = runs_dir or _runs_dir()
     d.mkdir(parents=True, exist_ok=True)
-    path = d / f"{summary['symbol']}.json"
+    path = d / f"{summary['symbol']}{suffix}.json"
     with path.open("w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2, default=str)
     return path
 
 
-def read_model_run(symbol: str, *, runs_dir: Path | None = None) -> dict[str, Any] | None:
+def read_model_run(
+    symbol: str, *, runs_dir: Path | None = None, suffix: str = ""
+) -> dict[str, Any] | None:
     """Load a saved model-evaluation summary, or ``None`` if none exists for ``symbol``."""
-    path = (runs_dir or _runs_dir()) / f"{symbol}.json"
+    path = (runs_dir or _runs_dir()) / f"{symbol}{suffix}.json"
     if not path.exists():
         return None
     with path.open("r", encoding="utf-8") as fh:

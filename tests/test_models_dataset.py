@@ -76,7 +76,8 @@ def test_matrix_matches_phase4_load_matrix_on_bounded_window():
 
     s, e = datetime(2019, 5, 1, tzinfo=UTC), datetime(2019, 9, 1, tzinfo=UTC)
     ref = load_matrix("MES", start=s, end=e)
-    new = load_training_matrix("MES", start=s, end=e, use_cache=False)
+    # Phase-4 load_matrix is price-only, so parity is checked price-only.
+    new = load_training_matrix("MES", start=s, end=e, use_cache=False, with_macro=False)
     assert new.n == ref.n
     assert np.array_equal(new.X, ref.X)
     assert np.array_equal(new.y, ref.y)
@@ -86,6 +87,28 @@ def test_matrix_matches_phase4_load_matrix_on_bounded_window():
     assert np.array_equal(new.weight, ref.weight)
     assert np.array_equal(new.uniqueness, ref.uniqueness)
     assert new.feature_cols == ref.feature_cols
+
+
+def test_macro_columns_appended_without_dropping_rows():
+    """Macro features add COLUMNS at each t0, never drop rows (count unchanged)."""
+    from options_system.features.build import partition_glob
+    from options_system.macro.ingest import partition_glob as macro_glob
+
+    if not glob(partition_glob("MES")) or not glob(macro_glob()):
+        pytest.skip("need feature lake + ingested macro events")
+    from options_system.models.dataset import load_training_matrix
+
+    s, e = datetime(2021, 1, 1, tzinfo=UTC), datetime(2021, 6, 1, tzinfo=UTC)
+    base = load_training_matrix("MES", start=s, end=e, use_cache=False, with_macro=False)
+    aug = load_training_matrix("MES", start=s, end=e, use_cache=False, with_macro=True)
+
+    assert aug.n == base.n  # macro adds columns, never drops rows
+    assert aug.macro_cols and aug.macro_feature_version
+    assert aug.X.shape[1] == base.X.shape[1] + len(aug.macro_cols)
+    # the price block is byte-identical (macro is purely additive)
+    assert np.array_equal(aug.X[:, : base.X.shape[1]], base.X)
+    # macro block carries real (finite) values for this in-history window
+    assert np.isfinite(aug.X[:, base.X.shape[1] :]).any()
 
 
 def _m(minutes: int):

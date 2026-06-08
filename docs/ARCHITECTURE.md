@@ -249,13 +249,46 @@ better data/features before any strategy. Nothing here trades, backtests
 economically, or promotes a model. Method + verdict: `docs/MODEL.md`; rationale:
 `docs/DECISIONS.md` Phase 5.
 
+## Macro / economic-event layer in detail (Phase 6, implemented)
+
+```
+ FRED / ALFRED (first-print, output_type=4)        config/macro.yaml
+   CPI · core CPI · PCE · core PCE · NFP ·       →  macro/config.py (typed, versioned)
+   unemployment · claims · GDP · retail · PPI ·            │
+   FOMC (scheduled calendar + DFEDTARU rate)              ▼
+              │                                  macro/ingest.py  (key-gated, stdlib urllib)
+              ▼                                  → data/macro_events/ table (event_time UTC,
+   features/macro_features.py                      actual_pit first-print, prior, surprise=null)
+   TIMING (schedule, known-ahead) +                       │
+   OUTCOME (backward as-of <= t0)                         ▼
+              │                                  models/dataset.py  (append 27 macro cols at t0;
+              ▼                                   row gate stays price-only → counts unchanged)
+   tests/test_macro_features_leakage.py                   │
+   timing-vs-outcome + teeth (forced leak)                ▼
+                                                 models/ + validation/  → IDENTICAL re-verdict
+```
+
+The **controlled-experiment** layer: change *inputs only*, then re-run the exact
+Phase-5 verdict. The leakage rule here is event-specific and is the whole game:
+scheduled release **times** are public in advance (so "minutes-to-next-CPI/FOMC"
+is a legitimate forward look at the *schedule*), but release **values** are known
+only at release (every `actual_pit` is the **first-print** ALFRED vintage, and
+outcome features index strictly backward, `event_time <= t0`). Macro context is
+instrument-independent, so the same features serve MES and MNQ; undefined values
+are `NaN` (LightGBM-native), so the row count is unchanged (10,827 / 11,688).
+**Current re-verdict: still no significant edge** — macro features dominate SHAP
+importance but do not beat beta after deflation, and the verdict is unchanged on
+both symbols. Method + comparison: `docs/MACRO.md`; rationale: `docs/DECISIONS.md`
+Phase 6. ISM is excluded (removed from FRED in 2016 over licensing).
+
 ## Where each module lives
 
 | Concern | Module | One-liner |
 |---|---|---|
 | shared plumbing | `common/` | logging, config, shared types |
 | data in + storage | `data/` | IBKR live + historical backfill → DuckDB/Parquet |
-| model inputs | `features/` | leakage-safe, point-in-time features |
+| macro events | `macro/` | point-in-time FRED/ALFRED economic-event calendar (first-print) |
+| model inputs | `features/` | leakage-safe, point-in-time price + macro-event features |
 | learning target | `labeling/` | triple-barrier labels (CUSUM events, uniqueness weights) |
 | honest evaluation | `validation/` | purged/embargoed CV, CPCV, PBO/PSR/DSR (leak-safe) |
 | text sentiment | `sentiment/` | FinBERT (GPU), optional 8B via Ollama |

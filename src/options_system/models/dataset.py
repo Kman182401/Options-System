@@ -19,7 +19,7 @@ target ``y_dir ∈ {-1, +1}`` (see :func:`derive_direction`).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from glob import glob as _glob
 from pathlib import Path
@@ -34,8 +34,12 @@ from ..data.store import DuckStore
 from ..features.build import partition_glob as feature_partition_glob
 from ..features.compute import feature_names
 from ..features.config import FeatureConfig
+from ..features.macro_features import compute_macro_features, macro_feature_names
 from ..labeling.build import read_labels
 from ..labeling.config import LabelConfig
+from ..macro.config import MacroConfig
+from ..macro.ingest import partition_glob as macro_partition_glob
+from ..macro.ingest import read_macro_events
 
 logger = get_logger(__name__)
 
@@ -56,7 +60,7 @@ class TrainingMatrix:
     """
 
     symbol: str
-    X: np.ndarray  # (n, p) features as-of t0
+    X: np.ndarray  # (n, p) features as-of t0 (price features, then macro features)
     y: np.ndarray  # (n,) triple-barrier labels in {-1, 0, +1}
     y_dir: np.ndarray  # (n,) directional target in {-1, +1} (up/down)
     t0: np.ndarray  # (n,) event time
@@ -64,14 +68,21 @@ class TrainingMatrix:
     ret: np.ndarray  # (n,) realized log-return to t1 (return proxy)
     weight: np.ndarray  # (n,) persisted sample weight (≈ mean 1.0)
     uniqueness: np.ndarray  # (n,) average uniqueness (effective-N building block)
-    feature_cols: list[str]
+    feature_cols: list[str]  # ALL model inputs in X-column order: price_cols + macro_cols
     feature_version: str
     label_version: str
     timeout_handling: str
+    # the macro-feature subset of feature_cols ([] when price-only) + its version stamp
+    macro_cols: list[str] = field(default_factory=list)
+    macro_feature_version: str | None = None
 
     @property
     def n(self) -> int:
         return int(self.y.shape[0])
+
+    @property
+    def with_macro(self) -> bool:
+        return bool(self.macro_cols)
 
 
 # --------------------------------------------------------------------------- #
@@ -157,9 +168,14 @@ def _finalize(joined: pl.DataFrame, feat_cols: list[str]) -> pl.DataFrame:
     return m
 
 
-def _cache_path(symbol: str, fv: str, lv: str, handling: str) -> Path:
+def _cache_path(symbol: str, fv: str, lv: str, handling: str, macro_tag: str) -> Path:
     d = Settings().data_dir / "models" / "cache"
-    return d / f"matrix_{symbol}_{fv}_{lv}_{handling}.parquet"
+    return d / f"matrix_{symbol}_{fv}_{lv}_{handling}_{macro_tag}.parquet"
+
+
+def _macro_available() -> bool:
+    """True if the macro_events table has been ingested (a cheap glob, no store)."""
+    return bool(_glob(macro_partition_glob()))
 
 
 def load_training_matrix(
@@ -171,27 +187,51 @@ def load_training_matrix(
     store: DuckStore | None = None,
     use_cache: bool = True,
     rebuild_cache: bool = False,
+    with_macro: bool = True,
 ) -> TrainingMatrix:
     """Assemble the leak-free directional training matrix for ``symbol`` — fast.
 
-    Reads labels (~11k rows) and attaches features with a pushed-down DuckDB ASOF
-    join, then reduces the 3-class label to a directional ``y_dir`` per
-    ``timeout_handling``. The arrays match Phase 4's ``load_matrix`` exactly.
+    Reads labels (~11k rows) and attaches price features with a pushed-down DuckDB
+    ASOF join, then reduces the 3-class label to a directional ``y_dir`` per
+    ``timeout_handling``. The price arrays match Phase 4's ``load_matrix`` exactly.
 
-    An optional on-disk cache (keyed by ``feature_version`` + ``label_version`` +
-    ``timeout_handling``) short-circuits full-history loads; it is bypassed for
-    bounded ``[start, end]`` windows.
+    When ``with_macro`` is set and the ``macro_events`` table has been ingested
+    (Phase 6), leak-safe macro/economic-event features are appended at each label
+    ``t0`` (timing from the public schedule, outcomes strictly backward — see
+    :mod:`options_system.features.macro_features`). Macro columns are NaN where
+    undefined (before the first event of a type), which LightGBM handles natively;
+    the null/non-finite **row** gate stays on the price features only, so the row
+    count is identical to the price-only matrix. If ``with_macro`` is requested but
+    no events exist, the matrix is built price-only with a warning.
+
+    An on-disk cache (keyed by ``feature_version`` + ``label_version`` +
+    ``timeout_handling`` + the macro tag) short-circuits full-history loads; it is
+    bypassed for bounded ``[start, end]`` windows.
     """
     fcfg = FeatureConfig.load()
     lcfg = LabelConfig.load()
     fv, lv = fcfg.feature_version, lcfg.label_version
-    feat_cols = list(feature_names(fcfg))
+    price_cols = list(feature_names(fcfg))
+
+    use_macro = with_macro and _macro_available()
+    if with_macro and not use_macro:
+        logger.warning(
+            f"[{symbol}] with_macro requested but macro_events table is empty — "
+            "building price-only matrix (run python -m options_system.macro.ingest)"
+        )
+    mcfg = MacroConfig.load() if use_macro else None
+    macro_cols = macro_feature_names(mcfg) if mcfg is not None else []
+    macro_fv = mcfg.features.macro_feature_version if mcfg is not None else None
+    macro_tag = f"macro-{macro_fv}" if use_macro else "nomacro"
+
     full_history = start is None and end is None
-    cache = _cache_path(symbol, fv, lv, timeout_handling)
+    cache = _cache_path(symbol, fv, lv, timeout_handling, macro_tag)
 
     if full_history and use_cache and not rebuild_cache and cache.exists():
         frame = pl.read_parquet(cache)
-        return _matrix_from_frame(frame, symbol, feat_cols, fv, lv, timeout_handling)
+        return _matrix_from_frame(
+            frame, symbol, price_cols, macro_cols, fv, lv, timeout_handling, macro_fv
+        )
 
     own = store is None
     store = store or DuckStore()
@@ -202,17 +242,34 @@ def load_training_matrix(
                 f"no labels for {symbol} in window — build labels first "
                 "(python -m options_system.labeling.build)"
             )
-        joined = _asof_attach(store, labels, symbol, feat_cols)
-        m = _finalize(joined, feat_cols)
+        joined = _asof_attach(store, labels, symbol, price_cols)
+        m = _finalize(joined, price_cols)  # row gate on PRICE features only
         if m.is_empty():
             raise ValueError(
                 f"all rows for {symbol} dropped (null/non-finite) after feature attach"
             )
-        frame = m.select([*feat_cols, "label", "ret", "weight", "avg_uniqueness", "t0", "t1"])
+        if mcfg is not None:  # == use_macro; this form lets the type-checker narrow mcfg
+            # compute_macro_features preserves the input t0 order → align by hstack.
+            events = read_macro_events(store=store)
+            macro_df = compute_macro_features(m["t0"], events, mcfg)
+            m = m.hstack(macro_df.drop("t0"))
+        keep_cols = [
+            *price_cols,
+            *macro_cols,
+            "label",
+            "ret",
+            "weight",
+            "avg_uniqueness",
+            "t0",
+            "t1",
+        ]
+        frame = m.select(keep_cols)
         if full_history and use_cache:
             cache.parent.mkdir(parents=True, exist_ok=True)
             frame.write_parquet(cache, compression="zstd")
-        return _matrix_from_frame(frame, symbol, feat_cols, fv, lv, timeout_handling)
+        return _matrix_from_frame(
+            frame, symbol, price_cols, macro_cols, fv, lv, timeout_handling, macro_fv
+        )
     finally:
         if own:
             store.close()
@@ -221,12 +278,19 @@ def load_training_matrix(
 def _matrix_from_frame(
     frame: pl.DataFrame,
     symbol: str,
-    feat_cols: list[str],
+    price_cols: list[str],
+    macro_cols: list[str],
     fv: str,
     lv: str,
     timeout_handling: str,
+    macro_fv: str | None,
 ) -> TrainingMatrix:
-    """Build arrays + the directional target from a finalized (clean) frame."""
+    """Build arrays + the directional target from a finalized (clean) frame.
+
+    ``X`` columns are ``price_cols`` then ``macro_cols``; ``feature_cols`` records
+    that exact order so SHAP / evaluation name the columns correctly.
+    """
+    feat_cols = [*price_cols, *macro_cols]
     y = frame["label"].to_numpy().astype(int)
     ret = frame["ret"].to_numpy().astype(float)
     y_dir, keep = derive_direction(y, ret, timeout_handling)
@@ -253,4 +317,6 @@ def _matrix_from_frame(
         feature_version=fv,
         label_version=lv,
         timeout_handling=timeout_handling,
+        macro_cols=macro_cols,
+        macro_feature_version=macro_fv,
     )

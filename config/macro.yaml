@@ -1,0 +1,139 @@
+# Macro / economic-event layer configuration (declarative, versioned).
+#
+# Loaded by macro/config.py into a typed MacroConfig. This declares the
+# economic-release calendar ingested from FRED/ALFRED and the leak-safe event
+# features built from it. Everything here is tunable WITHOUT touching code.
+#
+# POINT-IN-TIME RULE (the whole game — see docs/MACRO.md):
+#   * Scheduled release TIMES are public in advance, so "minutes to the next
+#     CPI / FOMC" is a legitimate feature available BEFORE the event.
+#   * Release VALUES (actual / prior) are known only AT/AFTER the release. We use
+#     the FIRST-PRINT value (FRED output_type=4 = "Observations, Initial Release
+#     Only"); the observation's realtime_start is the publication date, combined
+#     with the standard release clock time below to form the UTC event_time.
+#
+# Bump `macro_version` if a change would alter ingested event rows, and
+# `features.macro_feature_version` if it would alter emitted feature values.
+
+macro_version: "v1"
+
+# Release clock is US Eastern; combined with the first-print release DATE to form
+# the UTC event_time. US data releases are at 08:30 ET; FOMC statement at 14:00 ET.
+timezone: America/New_York
+
+# Economic-data events ingested from FRED/ALFRED (first-print via output_type=4).
+# Each carries a FRED series id, the standard release clock time (ET), a human
+# label, and whether it is high-impact (drives the aggregate timing features).
+# NOTE on `surprise`: FRED carries no consensus/expectations series, so `surprise`
+# (actual vs consensus) is left NULL — never fabricated. The outcome feature is
+# the change vs the prior release (actual_pit - prior), which is not a surprise.
+events:
+  cpi:      {series_id: CPIAUCSL, release_et: "08:30", label: "CPI, all items (SA)",              high_impact: true}
+  core_cpi: {series_id: CPILFESL, release_et: "08:30", label: "Core CPI, ex food & energy (SA)",  high_impact: true}
+  pce:      {series_id: PCEPI,    release_et: "08:30", label: "PCE price index (SA)",              high_impact: true}
+  core_pce: {series_id: PCEPILFE, release_et: "08:30", label: "Core PCE, ex food & energy (SA)",  high_impact: true}
+  nfp:      {series_id: PAYEMS,   release_et: "08:30", label: "Nonfarm payrolls (SA)",             high_impact: true}
+  unrate:   {series_id: UNRATE,   release_et: "08:30", label: "Unemployment rate (SA)",            high_impact: true}
+  claims:   {series_id: ICSA,     release_et: "08:30", label: "Initial jobless claims (SA)",       high_impact: false}
+  gdp:      {series_id: GDPC1,    release_et: "08:30", label: "Real GDP, advance (SAAR)",          high_impact: true}
+  retail:   {series_id: RSAFS,    release_et: "08:30", label: "Advance retail sales (SA)",         high_impact: true}
+  ppi:      {series_id: PPIFIS,   release_et: "08:30", label: "PPI final demand (SA)",             high_impact: false}
+
+# FOMC scheduled meetings. The rate DECISION is announced when the statement is
+# released at 14:00 ET on the second (decision) day. The schedule is published far
+# in advance, so timing features are point-in-time legitimate. The rate OUTCOME is
+# the federal-funds target UPPER limit (DFEDTARU, first-print) as of each meeting.
+#
+# INTERMEETING EMERGENCY actions are deliberately EXCLUDED from this scheduled
+# calendar (they are not knowable in advance): the Mar-2020 COVID emergency cuts
+# (2020-03-03, 2020-03-15, 2020-03-23, 2020-03-31) and the 2019-10-11 balance-sheet
+# announcement are omitted; Jackson Hole symposiums (e.g. 2020-08-27, 2025-08-22)
+# are not FOMC meetings. The scheduled March-2020 slot is its calendared 03-18.
+# Decision dates verified against federalreserve.gov FOMC calendars (8/year).
+fomc:
+  release_et: "14:00"
+  rate_series_id: DFEDTARU
+  high_impact: true
+  decision_dates:
+    - 2019-01-30
+    - 2019-03-20
+    - 2019-05-01
+    - 2019-06-19
+    - 2019-07-31
+    - 2019-09-18
+    - 2019-10-30
+    - 2019-12-11
+    - 2020-01-29
+    - 2020-03-18
+    - 2020-04-29
+    - 2020-06-10
+    - 2020-07-29
+    - 2020-09-16
+    - 2020-11-05
+    - 2020-12-16
+    - 2021-01-27
+    - 2021-03-17
+    - 2021-04-28
+    - 2021-06-16
+    - 2021-07-28
+    - 2021-09-22
+    - 2021-11-03
+    - 2021-12-15
+    - 2022-01-26
+    - 2022-03-16
+    - 2022-05-04
+    - 2022-06-15
+    - 2022-07-27
+    - 2022-09-21
+    - 2022-11-02
+    - 2022-12-14
+    - 2023-02-01
+    - 2023-03-22
+    - 2023-05-03
+    - 2023-06-14
+    - 2023-07-26
+    - 2023-09-20
+    - 2023-11-01
+    - 2023-12-13
+    - 2024-01-31
+    - 2024-03-20
+    - 2024-05-01
+    - 2024-06-12
+    - 2024-07-31
+    - 2024-09-18
+    - 2024-11-07
+    - 2024-12-18
+    - 2025-01-29
+    - 2025-03-19
+    - 2025-05-07
+    - 2025-06-18
+    - 2025-07-30
+    - 2025-09-17
+    - 2025-10-29
+    - 2025-12-10
+    - 2026-01-28
+    - 2026-03-18
+    - 2026-04-29
+    - 2026-06-17
+    - 2026-07-29
+    - 2026-09-16
+    - 2026-10-28
+    - 2026-12-09
+
+# ISM manufacturing & non-manufacturing (services) PMIs are intentionally NOT
+# ingested. The Institute for Supply Management's data was REMOVED from FRED on
+# 2016-06-24 over a licensing dispute, so it is not available from this free
+# source — and we do not fabricate it. Documented in docs/MACRO.md.
+
+# --- Leak-safe event features (features/macro_features.py) -------------------
+features:
+  macro_feature_version: "v1"
+  # Per-type minutes-to-next / minutes-since-last (timing, schedule-known-ahead).
+  timing_types: [fomc, cpi, nfp, pce]
+  # Per-type "actual - prior" change at the most recent release (outcome, backward).
+  outcome_types: [cpi, core_cpi, pce, core_pce, nfp, unrate, claims, gdp, retail, ppi, fomc]
+  # Short rolling mean of recent release changes (indicator momentum).
+  tendency_types: [cpi, nfp]
+  tendency_window: 3              # number of past releases averaged
+  blackout_lead_minutes: 120      # "pre-event blackout" flag: within N minutes before a high-impact event
+  next_horizon_hours: 24          # count of high-impact events scheduled in the next N hours

@@ -106,7 +106,19 @@ consistently regardless of which symbol's row they sit on.
 `ts_event`, `ts_ingest`, `symbol`, `session` (RTH/ETH), `degraded` (warmup rows
 or a Databento-flagged degraded day), `feature_version`.
 
-## Hooks (built nothing yet)
+## Macro / economic-event features (Phase 6 — separate module)
 
-`news` / macro features — no data ingested. The config has a disabled `news`
-seat (`config/features.yaml`); the engine emits nothing for it.
+Structured **macro** features (FRED/ALFRED economic releases + the FOMC calendar)
+are built by `features/macro_features.py` from the `macro/` ingestion layer, **not**
+by `compute.py`, and are versioned independently (`macro_feature_version`). They
+are appended to the training matrix at each label `t0` (timing features from the
+public release *schedule*; outcome features strictly backward, `event_time <= t0`).
+Catalog, point-in-time/ALFRED handling, the timing-vs-outcome leakage rule, and the
+re-verdict are in `docs/MACRO.md`. The disabled `news` seat in
+`config/features.yaml` remains a placeholder for the **next** layer (news /
+sentiment), which is intentionally separated so signal can be attributed.
+
+## Hooks (not built yet)
+
+`news` / sentiment features (FinBERT / local LLM) — no data ingested; the disabled
+`news` seat in `config/features.yaml` is a forward-ready placeholder only.

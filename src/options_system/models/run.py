@@ -15,6 +15,7 @@ only answers *is there a real, deflated edge?*
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any
 
@@ -38,18 +39,30 @@ def run_symbol(
     mcfg: ModelConfig | None = None,
     vcfg: ValidationConfig | None = None,
     *,
+    with_macro: bool = True,
     log_mlflow: bool = True,
     save: bool = True,
     interpret: bool = True,
 ) -> dict[str, Any]:
-    """Run the full evaluation for one symbol and return the JSON-able summary."""
+    """Run the full evaluation for one symbol and return the JSON-able summary.
+
+    ``with_macro`` chooses the input set: price+macro (default, Phase-6) or the
+    price-only Phase-5 baseline. The model spec, CV machinery and verdict gates are
+    identical either way — only the feature matrix changes (a clean controlled
+    experiment). Price-only runs are saved under a ``_price_only`` suffix.
+    """
     mcfg = mcfg or ModelConfig.load()
     vcfg = vcfg or ValidationConfig.load()
+    suffix = "" if with_macro else "_price_only"
+    tag = "price+macro" if with_macro else "price-only"
 
-    logger.info(f"[{symbol}] assembling matrix (timeout={mcfg.target.timeout_handling})")
-    tm = load_training_matrix(symbol, timeout_handling=mcfg.target.timeout_handling)
+    logger.info(f"[{symbol}] assembling matrix ({tag}, timeout={mcfg.target.timeout_handling})")
+    tm = load_training_matrix(
+        symbol, timeout_handling=mcfg.target.timeout_handling, with_macro=with_macro
+    )
     logger.info(
-        f"[{symbol}] n={tm.n} eff_n={tm.uniqueness.sum():.0f} — "
+        f"[{symbol}] n={tm.n} eff_n={tm.uniqueness.sum():.0f} "
+        f"feat={len(tm.feature_cols)} (+{len(tm.macro_cols)} macro) — "
         f"searching ({mcfg.search.n_trials} trials)"
     )
     search = run_search(tm, mcfg, vcfg)
@@ -64,7 +77,7 @@ def run_symbol(
         estimator.fit(tm.X, tm.y_dir, sample_weight=tm.weight)  # full-data fit: SHAP + artifact
 
     if interpret:
-        png = _runs_dir() / f"{symbol}_shap.png"
+        png = _runs_dir() / f"{symbol}{suffix}_shap.png"
         summary["shap"] = explain(
             tm, mcfg, search.selected_overrides, estimator=estimator, out_png=png
         )
@@ -81,8 +94,80 @@ def run_symbol(
     summary["mlflow_run_id"] = run_id
 
     if save:
-        save_model_run(summary)
+        save_model_run(summary, suffix=suffix)
     return summary
+
+
+def _gate_row(summary: dict[str, Any]) -> dict[str, Any]:
+    """Flatten the headline gate metrics + verdict from a run summary (for comparison)."""
+    p = summary["pooled_kfold"]
+    return {
+        "verdict": summary["verdict"],
+        "n_features": summary["n_features"],
+        "directional_accuracy": p["directional_accuracy"],
+        "excess_sharpe": p["excess_sharpe"],
+        "long_benchmark_sharpe": p["long_benchmark_sharpe"],
+        "excess_dsr": p["excess_dsr"],
+        "pbo": summary["pbo"]["pbo"] if summary["pbo"] else None,
+        "cpcv_excess_sharpe_mean": summary["cpcv"]["excess_sharpe"]["mean"],
+    }
+
+
+def compare_symbol(
+    symbol: str,
+    mcfg: ModelConfig | None = None,
+    vcfg: ValidationConfig | None = None,
+    *,
+    log_mlflow: bool = True,
+    interpret: bool = True,
+) -> dict[str, Any]:
+    """Run BOTH price-only and price+macro for ``symbol`` and return a side-by-side.
+
+    The two runs are identical except for the feature matrix (same labels, same CV,
+    same verdict gates), so the comparison isolates whether macro features add a
+    real, deflated, beta-beating edge over the Phase-5 price-only baseline. The
+    comparison dict is saved to ``data/models/runs/<symbol>_comparison.json``.
+    """
+    mcfg = mcfg or ModelConfig.load()
+    vcfg = vcfg or ValidationConfig.load()
+    price = run_symbol(
+        symbol, mcfg, vcfg, with_macro=False, log_mlflow=log_mlflow, interpret=interpret
+    )
+    macro = run_symbol(
+        symbol, mcfg, vcfg, with_macro=True, log_mlflow=log_mlflow, interpret=interpret
+    )
+    comparison = {
+        "symbol": symbol,
+        "model_version": mcfg.model_version,
+        "feature_version": macro["feature_version"],
+        "label_version": macro["label_version"],
+        "macro_feature_version": macro["macro_feature_version"],
+        "price_only": _gate_row(price),
+        "price_plus_macro": _gate_row(macro),
+        "verdict_changed": price["verdict"] != macro["verdict"],
+    }
+    path = _runs_dir() / f"{symbol}_comparison.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(comparison, fh, indent=2, default=str)
+    return comparison
+
+
+def _print_comparison(c: dict[str, Any]) -> None:
+    po, pm = c["price_only"], c["price_plus_macro"]
+    logger.info(f"[{c['symbol']}] PRICE-ONLY vs PRICE+MACRO (mfv={c['macro_feature_version']})")
+    logger.info(
+        f"  price-only : verdict={po['verdict']!r} acc={po['directional_accuracy']} "
+        f"excessSR={po['excess_sharpe']} (long={po['long_benchmark_sharpe']}) "
+        f"excessDSR={po['excess_dsr']} PBO={po['pbo']} CPCVexSR={po['cpcv_excess_sharpe_mean']}"
+    )
+    logger.info(
+        f"  price+macro: verdict={pm['verdict']!r} acc={pm['directional_accuracy']} "
+        f"excessSR={pm['excess_sharpe']} (long={pm['long_benchmark_sharpe']}) "
+        f"excessDSR={pm['excess_dsr']} PBO={pm['pbo']} CPCVexSR={pm['cpcv_excess_sharpe_mean']} "
+        f"[{pm['n_features']} feat]"
+    )
+    logger.info(f"  verdict changed: {c['verdict_changed']}")
 
 
 def _print_verdict(summary: dict[str, Any]) -> None:
@@ -109,20 +194,37 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--symbols", nargs="+", default=None, help="default: settings.record_symbols")
     p.add_argument("--no-mlflow", action="store_true", help="skip MLflow logging")
     p.add_argument("--no-interpret", action="store_true", help="skip SHAP")
+    p.add_argument(
+        "--no-macro",
+        action="store_true",
+        help="use the price-only Phase-5 feature set (skip macro features)",
+    )
+    p.add_argument(
+        "--compare",
+        action="store_true",
+        help="run BOTH price-only and price+macro and print the side-by-side verdict comparison",
+    )
     args = p.parse_args(argv)
 
     symbols = args.symbols or Settings().record_symbols
     mcfg, vcfg = ModelConfig.load(), ValidationConfig.load()
-    logger.info(f"model_version={mcfg.model_version} symbols={symbols}")
+    logger.info(f"model_version={mcfg.model_version} symbols={symbols} compare={args.compare}")
     for symbol in symbols:
-        summary = run_symbol(
-            symbol,
-            mcfg,
-            vcfg,
-            log_mlflow=not args.no_mlflow,
-            interpret=not args.no_interpret,
-        )
-        _print_verdict(summary)
+        if args.compare:
+            c = compare_symbol(
+                symbol, mcfg, vcfg, log_mlflow=not args.no_mlflow, interpret=not args.no_interpret
+            )
+            _print_comparison(c)
+        else:
+            summary = run_symbol(
+                symbol,
+                mcfg,
+                vcfg,
+                with_macro=not args.no_macro,
+                log_mlflow=not args.no_mlflow,
+                interpret=not args.no_interpret,
+            )
+            _print_verdict(summary)
     return 0
 
 

@@ -10,7 +10,10 @@ the input that decides what we build next.
 > price-only directional model does not beat a coin flip after deflation, and it
 > *loses to buy-and-hold*. This is a valid, expected result — not a failure — and
 > it says: iterate on **data and features** (the deferred macro/sentiment layer,
-> richer microstructure) before building any strategy.
+> richer microstructure) before building any strategy. **(Update — Phase 6: the
+> macro/economic-event layer was added and re-tested through this identical
+> verdict; still no significant edge. See "Phase 6 re-verdict" below and
+> `docs/MACRO.md`.)**
 
 ---
 
@@ -131,6 +134,31 @@ When (and only when) a configuration clears all four gates here will a strategy 
 worth building.
 
 ---
+
+## Phase 6 re-verdict — adding structured macro context
+
+Per the plan, Phase 6 adds a **macro / economic-event** feature layer (FRED/ALFRED
+first-print releases + the FOMC calendar) and re-runs **this exact verdict** — same
+labels, same CV, same gates — changing *inputs only*. Full method + leakage rules:
+`docs/MACRO.md`.
+
+| symbol | inputs | dir. acc | excess SR | excess **DSR** | **PBO** | VERDICT |
+|---|---|---|---|---|---|---|
+| MES | price-only (45) | 0.5164 | −0.0175 | 0.006 | 0.83 | no significant edge |
+| MES | **price+macro (72)** | 0.4976 | −0.0371 | 0.00001 | 0.88 | **no significant edge** |
+| MNQ | price-only (45) | 0.5267 | −0.0127 | 0.021 | 0.70 | no significant edge |
+| MNQ | **price+macro (72)** | 0.5209 | −0.0142 | 0.014 | 0.52 | **no significant edge** |
+
+The verdict is **unchanged** on both symbols. Macro did not help — on MES it
+slightly *hurt* (pooled OOS accuracy dipped below chance, excess Sharpe more
+negative); on MNQ it barely moved the numbers (PBO fell to a borderline 0.52) but
+excess-over-beta stays negative and the deflated Sharpe ≈0. **Notably, macro
+features dominate the model's SHAP importance (~66–69 % of total) yet carry no
+out-of-sample edge** — the validation framework's job is precisely to expose that
+gap, and the high-importance-but-null result argues *against* leakage (a real leak
+would inflate OOS accuracy, not depress it). The productive levers remain news /
+sentiment, microstructure (likely with a shorter-horizon label), or options
+structure — each tested through this same harness.
 
 ## How to run / view it
 

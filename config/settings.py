@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     # --- Secrets (loaded from .env; never committed) ---
     databento_api_key: SecretStr | None = None
     finnhub_api_key: SecretStr | None = None
+    # FRED/ALFRED API key for the macro/economic-event layer (Phase 6). Free from
+    # https://fred.stlouisfed.org/docs/api/api_key.html. When unset, macro ingestion
+    # no-ops with a clear message (the rest of the system runs unchanged).
+    fred_api_key: SecretStr | None = None
     telegram_bot_token: SecretStr | None = None
     telegram_chat_id: str | None = None  # an ID, not a secret, but optional
 
