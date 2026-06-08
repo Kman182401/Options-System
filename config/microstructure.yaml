@@ -1,0 +1,73 @@
+# Microstructure / order-flow layer configuration (declarative, versioned).
+#
+# Loaded by microstructure/config.py into a typed MicrostructureConfig. This is a
+# SEPARATE, additive experiment from the price feature_version=v1 layer. It is
+# deliberately COST-STAGED: this stage ingests the CHEAP top-of-book schema
+# (MBP-1 = best bid/offer updates + trades) for the deep e-mini parents (ES, NQ),
+# reduces them to dollar bars, and computes a single-level order-flow feature
+# family stamped microstructure_feature_version below. Multi-level OFI (MLOFI)
+# needs the ~5x-pricier MBP-10 and is a DELIBERATE LATER escalation — not here.
+# Nothing here touches the v1 price features, labels, or the validation framework.
+#
+# Leakage rule baked in: every feature at bar t is a function only of events with
+# ts_event <= bar t's close. Dollar bars never span a contract roll or a session
+# boundary. See docs/MICROSTRUCTURE.md and tests/test_microstructure_leakage.py.
+
+microstructure_feature_version: "m1"
+
+# Databento source (same dataset family as the existing 1-min backfill).
+dataset: "GLBX.MDP3"
+schema: "mbp-1"          # top-of-book L1: best bid/offer updates + trade events
+
+# Ingestion window — small + recent. The binding constraint is BUDGET (per-byte
+# billing) and local compute, not history. A 3-month slice proves the pipeline and
+# takes a first cheap signal read; extend later only if warranted.
+window:
+  start: "2026-03-01"
+  end: "2026-06-01"
+
+# HARD COST GUARD. Estimated cost of any planned pull (running total across day
+# chunks) must never exceed this. The ingest CLI aborts rather than download more.
+databento_budget_usd_cap: 40.0
+
+# Session handling. Default: RTH-only. Target horizon is intraday 1-30 min, where
+# order-flow predictive power is documented and liquidity is deepest; RTH also
+# removes thin-overnight-book noise and cuts data cost ~3x. Bars reset at each RTH
+# session boundary (never span overnight).
+session:
+  tz: America/New_York
+  rth_only: true
+  rth_open_min: 570        # 09:30 ET in minutes-from-midnight
+  rth_close_min: 960       # 16:00 ET
+
+# Instruments: the deep, liquid e-mini PARENTS (price discovery happens here). Any
+# edge transfers directly to the micro execution vehicle (exec_symbol), 1/10
+# notional of the same index. continuous_symbol uses Databento volume-rank front
+# month (.v.0) = the same volume-crossover roll rule as the existing layer.
+#
+# dollar_threshold: a dollar bar closes once this much TRADED notional (price *
+# size * multiplier) accumulates. Tuned to ~a few hundred to ~1k bars per RTH
+# session (document realized median in QA). Pre-committed; not tuned to results.
+instruments:
+  - symbol: ES
+    continuous_symbol: ES.v.0
+    exec_symbol: MES
+    multiplier: 50.0
+    tick_size: 0.25
+    dollar_threshold: 300000000      # ~$300M traded notional / bar
+  - symbol: NQ
+    continuous_symbol: NQ.v.0
+    exec_symbol: MNQ
+    multiplier: 20.0
+    tick_size: 0.25
+    dollar_threshold: 250000000      # ~$250M traded notional / bar
+
+# Order-flow feature parameters (single level only at this stage).
+ofi:
+  rolling_bars: 3          # k for causal rolling-history features (past bars incl. current)
+
+# Ingestion controls (RAM- and budget-safe).
+ingest:
+  chunk: "day"             # download + reduce one trading day at a time, then discard raw DBN
+  retries: 3
+  backoff_s: 3.0

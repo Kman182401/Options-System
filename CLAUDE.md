@@ -37,7 +37,11 @@ Python 3.12 (uv) · ib_async · nautilus_trader · lightgbm · polars/pandas · 
 - **Phase 2 (later):** options vertical spreads adapter on the same engine.
 
 ## Directory map
-`config/` typed config + yaml · `src/options_system/{common,data,features,sentiment,models,strategy,risk,execution,backtest,observability}/` · `scripts/` smoke tests · `tests/` · `data|models|logs/` (gitignored) · `docs/` (ARCHITECTURE, DECISIONS, GLOSSARY, SETUP, research/).
+`config/` typed config + yaml · `src/options_system/{common,data,features,macro,labeling,microstructure,sentiment,models,strategy,risk,execution,backtest,observability,validation}/` · `scripts/` smoke tests · `tests/` · `data|models|logs/` (gitignored) · `docs/` (ARCHITECTURE, DECISIONS, GLOSSARY, SETUP, MICROSTRUCTURE, research/).
+
+## Feature layers (versioned, isolated, additive)
+- `feature_version=v1` — price features (1-min bars). `macro_feature_version` — macro/event layer. `microstructure_feature_version=m1` — order-flow/OFI on **dollar bars** from CME L2 data, separate `data/micro_bars/` table; see `docs/MICROSTRUCTURE.md`.
+- **Databento cost is real money, billed per byte.** Always `metadata.get_cost`/`get_billable_size` (free) BEFORE any `get_range`/`to_file`. Microstructure ingest is gated by `databento_budget_usd_cap` (estimate→cap→abort). Key in `pass` (`databento/api_key_2` live, `databento/api_key` original/depleted), never `.env`. MBP-1 (top-of-book) now; MBP-10 (multi-level OFI) is a later escalation.
 
 ## How to run
 - Install: `uv sync`
