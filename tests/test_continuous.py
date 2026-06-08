@@ -130,4 +130,5 @@ def test_persist_rolls_writes_event(tmp_path):
     back = pl.read_parquet(lake.partition_glob("roll_events"))
     assert back.height == 1
     assert back["to_contract_id"][0] == B
-    assert back["ts_ingest"].dtype.time_zone == "UTC"  # type: ignore[union-attr]
+    dtype = back["ts_ingest"].dtype
+    assert isinstance(dtype, pl.Datetime) and dtype.time_zone == "UTC"

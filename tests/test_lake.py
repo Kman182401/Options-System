@@ -63,7 +63,8 @@ def test_both_timestamps_present_and_utc(tmp_path):
     for col in ("ts_event", "ts_ingest"):
         assert col in out.columns
         assert out[col].null_count() == 0
-        assert out[col].dtype.time_zone == "UTC"  # type: ignore[union-attr]
+        dtype = out[col].dtype
+        assert isinstance(dtype, pl.Datetime) and dtype.time_zone == "UTC"
     # ts_ingest must be at/after ts_event everywhere (no future-leak by construction)
     assert (out["ts_ingest"] >= out["ts_event"]).all()
 
@@ -77,9 +78,11 @@ def test_writer_is_idempotent(tmp_path):
     # ...and also across a fresh Lake (keys reloaded from disk)
     assert Lake(root=tmp_path).write("bars_1m", df) == 0
 
-    n_rows = duckdb.sql(
+    row = duckdb.sql(
         f"SELECT count(*) FROM read_parquet('{lake.partition_glob('bars_1m')}')"
-    ).fetchone()[0]
+    ).fetchone()
+    assert row is not None
+    n_rows = row[0]
     assert n_rows == df.height  # no duplicates on disk-read
 
 

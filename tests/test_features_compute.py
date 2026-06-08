@@ -4,6 +4,7 @@ warmup/NaN, spread exclusion, and cross-asset causality (Tasks 2 & 5)."""
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -147,7 +148,7 @@ def test_cross_asset_uses_no_future_of_the_other_symbol():
 
 @pytest.fixture(scope="module")
 def real_mes():
-    if Lake().scan("bars_1m", "MES").collect().is_empty():
+    if cast(pl.DataFrame, Lake().scan("bars_1m", "MES").collect()).is_empty():
         pytest.skip("lake not populated")
     store = DuckStore()
     df = store.get_bars(

@@ -15,6 +15,7 @@ Streamlit code below is a thin view over it.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import polars as pl
 
@@ -46,7 +47,7 @@ def gather_health(
             "last_roll": None,
         }
         if not bars.is_empty():
-            last_ts = bars["ts_event"].max()
+            last_ts = cast(datetime, bars["ts_event"].max())
             info["last_bar_age_s"] = (now - last_ts).total_seconds()
             info["front_contract"] = bars.sort("ts_event")["contract_id"][-1]
             info["rows_by_day"] = (

@@ -69,7 +69,8 @@ def test_recorder_buffer_flush_to_lake(tmp_path):
     assert quotes.height == 1
     # dual timestamps present, UTC, and ingest >= event
     for frame in (bars5, bars1, quotes):
-        assert frame["ts_event"].dtype.time_zone == "UTC"  # type: ignore[union-attr]
+        dtype = frame["ts_event"].dtype
+        assert isinstance(dtype, pl.Datetime) and dtype.time_zone == "UTC"
         assert (frame["ts_ingest"] >= frame["ts_event"]).all()
         assert frame["session"].unique().to_list() == ["RTH"]
 

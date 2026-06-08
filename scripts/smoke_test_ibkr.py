@@ -96,7 +96,7 @@ def main() -> int:
 
         this_month = datetime.now().strftime("%Y%m")
         contracts = sorted(
-            (cd.contract for cd in details),
+            (cd.contract for cd in details if cd.contract is not None),
             key=lambda c: c.lastTradeDateOrContractMonth,
         )
         front = next(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import polars as pl
 
@@ -52,8 +53,10 @@ def test_get_bars_returns_window_ordered(tmp_path):
     )
     assert out.height == 3  # 14:31, 14:32, 14:33
     assert out["ts_event"].is_sorted()
-    assert out["ts_event"].min() >= datetime(2026, 6, 5, 14, 31, tzinfo=UTC)
-    assert out["ts_event"].max() <= datetime(2026, 6, 5, 14, 33, tzinfo=UTC)
+    ts_min = cast(datetime, out["ts_event"].min())
+    ts_max = cast(datetime, out["ts_event"].max())
+    assert ts_min >= datetime(2026, 6, 5, 14, 31, tzinfo=UTC)
+    assert ts_max <= datetime(2026, 6, 5, 14, 33, tzinfo=UTC)
 
 
 def test_get_bars_empty_when_no_data(tmp_path):

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from glob import glob as _glob
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 import polars as pl
@@ -34,8 +35,12 @@ SCHEMA_VERSION = 1
 # Timestamps are microsecond-resolution, timezone-aware UTC.
 _TS = pl.Datetime("us", "UTC")
 
+# A column dtype is either a concrete DataType instance (e.g. _TS above) or a
+# dtype class (e.g. pl.Int64); polars accepts both in a schema mapping.
+_DType = pl.DataType | type[pl.DataType]
+
 # --- Canonical schemas (column -> Polars dtype), in on-disk order. ---
-_BARS: dict[str, pl.DataType] = {
+_BARS: dict[str, _DType] = {
     "ts_event": _TS,
     "ts_ingest": _TS,
     "symbol": pl.Utf8,
@@ -53,7 +58,7 @@ _BARS: dict[str, pl.DataType] = {
     "schema_version": pl.Int32,
 }
 
-_QUOTES_L1: dict[str, pl.DataType] = {
+_QUOTES_L1: dict[str, _DType] = {
     "ts_event": _TS,
     "ts_ingest": _TS,
     "symbol": pl.Utf8,
@@ -70,7 +75,7 @@ _QUOTES_L1: dict[str, pl.DataType] = {
     "schema_version": pl.Int32,
 }
 
-_TRADES: dict[str, pl.DataType] = {
+_TRADES: dict[str, _DType] = {
     "ts_event": _TS,
     "ts_ingest": _TS,
     "symbol": pl.Utf8,
@@ -83,7 +88,7 @@ _TRADES: dict[str, pl.DataType] = {
     "schema_version": pl.Int32,
 }
 
-_ROLL_EVENTS: dict[str, pl.DataType] = {
+_ROLL_EVENTS: dict[str, _DType] = {
     "ts_event": _TS,
     "ts_ingest": _TS,
     "symbol": pl.Utf8,
@@ -99,7 +104,7 @@ _ROLL_EVENTS: dict[str, pl.DataType] = {
 }
 
 # dataset -> (schema, natural-key columns used for dedupe)
-DATASETS: dict[str, tuple[dict[str, pl.DataType], tuple[str, ...]]] = {
+DATASETS: dict[str, tuple[dict[str, _DType], tuple[str, ...]]] = {
     "bars_1m": (_BARS, ("contract_id", "ts_event")),
     "bars_5s": (_BARS, ("contract_id", "ts_event")),
     "quotes_l1": (_QUOTES_L1, ("contract_id", "ts_event")),
@@ -111,7 +116,7 @@ DATASETS: dict[str, tuple[dict[str, pl.DataType], tuple[str, ...]]] = {
 _REQUIRED = ("ts_event", "ts_ingest", "symbol")
 
 
-def schema(dataset: str) -> dict[str, pl.DataType]:
+def schema(dataset: str) -> dict[str, _DType]:
     """Return the canonical Polars schema for ``dataset``."""
     return dict(DATASETS[_check(dataset)][0])
 
@@ -167,7 +172,8 @@ class Lake:
         out = df.select(cols)
         # ts columns must be UTC-aware; if a naive datetime slipped in, treat as UTC.
         for ts_col in ("ts_event", "ts_ingest"):
-            if out.schema[ts_col].time_zone is None:  # type: ignore[union-attr]
+            dtype = out.schema[ts_col]
+            if isinstance(dtype, pl.Datetime) and dtype.time_zone is None:
                 out = out.with_columns(pl.col(ts_col).dt.replace_time_zone("UTC"))
         return out
 
@@ -176,7 +182,10 @@ class Lake:
         if not part_dir.exists() or not any(part_dir.glob("*.parquet")):
             return set()
         lf = pl.scan_parquet(part_dir / "*.parquet")
-        keys = lf.select(_key_expr(key_cols).alias("_key")).collect()["_key"]
+        # collect() is typed as DataFrame | InProcessQuery (the latter only when
+        # background=True); the default is always a DataFrame.
+        frame = cast(pl.DataFrame, lf.select(_key_expr(key_cols).alias("_key")).collect())
+        keys = frame["_key"]
         return set(keys.to_list())
 
     # -- write --------------------------------------------------------------

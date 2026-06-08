@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 from datetime import UTC, datetime
+from typing import cast
 
 import polars as pl
 import pytest
@@ -39,7 +40,7 @@ _lake = Lake()
 
 
 def _raw_outright(symbol: str) -> pl.DataFrame:
-    df = _lake.scan("bars_1m", symbol).collect()
+    df = cast(pl.DataFrame, _lake.scan("bars_1m", symbol).collect())
     return df.filter(~pl.col("contract_id").str.contains("-"))
 
 
@@ -62,7 +63,10 @@ def _continuous(
 def setup():
     cfg = FeatureConfig.load()
     raw = {s: _raw_outright(s) for s in SYMBOLS}
-    rolls = {s: _lake.scan("roll_events", s).collect().sort("ts_event") for s in SYMBOLS}
+    rolls = {
+        s: cast(pl.DataFrame, _lake.scan("roll_events", s).collect()).sort("ts_event")
+        for s in SYMBOLS
+    }
     if any(raw[s].is_empty() or rolls[s].is_empty() for s in SYMBOLS):
         pytest.skip("lake/roll_events not populated (run backfill + continuous stitch first)")
     cont_full = {s: _continuous(raw[s], rolls[s], WINDOW_START, WINDOW_END) for s in SYMBOLS}

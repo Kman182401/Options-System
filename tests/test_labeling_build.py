@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import polars as pl
@@ -71,7 +72,7 @@ def test_writer_idempotent_and_schema(tmp_path: Path, monkeypatch):
     assert list(frame.columns) == list(_COLUMNS)
     assert set(frame["label_version"].to_list()) == {cfg.label_version}
     assert frame["weight"].is_finite().all()
-    assert np.isclose(frame["weight"].mean(), 1.0)
+    assert np.isclose(cast(float, frame["weight"].mean()), 1.0)
 
     n1 = _write_symbol(frame, "TEST")
     assert n1 == frame.height

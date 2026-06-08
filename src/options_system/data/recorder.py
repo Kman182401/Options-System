@@ -31,6 +31,7 @@ import contextlib
 import signal
 from collections import defaultdict
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import polars as pl
@@ -40,6 +41,9 @@ from options_system.common.logging import get_logger
 
 from .continuous import Contract, pick_front_month
 from .lake import SCHEMA_VERSION, Lake
+
+if TYPE_CHECKING:
+    from ib_async import IB
 
 log = get_logger("data.recorder")
 
@@ -144,7 +148,7 @@ class Recorder:
         self._counts: dict[str, int] = defaultdict(int)
         self._last_bar_ts: dict[str, datetime] = {}
         self._stop = False
-        self.ib = None  # set in run()
+        self.ib: IB | None = None  # set in run()
 
     # -- row builders (pure) ------------------------------------------------
     def _bar_row(self, symbol: str, contract_id: str, con_id: int | None, b: dict) -> dict:
@@ -224,6 +228,7 @@ class Recorder:
     async def _resolve_front(self, symbol: str):
         from ib_async import Future
 
+        assert self.ib is not None  # connected in _main() before any resolve
         details = await self.ib.reqContractDetailsAsync(
             Future(symbol=symbol, exchange="CME", currency="USD")
         )
@@ -233,6 +238,7 @@ class Recorder:
         ib_by_id: dict[str, object] = {}
         for cd in details:
             c = cd.contract
+            assert c is not None  # IBKR ContractDetails always carry a contract
             expiry = datetime.strptime(c.lastTradeDateOrContractMonth[:8], "%Y%m%d").date()
             cid = c.localSymbol or f"{symbol}{c.lastTradeDateOrContractMonth}"
             candidates.append(Contract(cid, expiry, c.conId))
@@ -243,6 +249,7 @@ class Recorder:
         return ib_by_id[front.contract_id], front.contract_id, front.con_id
 
     async def _subscribe_symbol(self, symbol: str) -> None:
+        assert self.ib is not None  # connected in _main() before any subscribe
         ib_contract, contract_id, con_id = await self._resolve_front(symbol)
         self._contract_symbol[contract_id] = symbol
         self._ib_contracts[contract_id] = ib_contract
@@ -301,6 +308,7 @@ class Recorder:
         )
 
     async def _connect(self) -> None:
+        assert self.ib is not None  # _main() constructs self.ib before _connect
         await self.ib.connectAsync(
             self.settings.ibkr_host,
             self.settings.ibkr_port,
