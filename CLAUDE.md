@@ -44,3 +44,10 @@ Python 3.12 (uv) · ib_async · nautilus_trader · lightgbm · polars/pandas · 
 - GPU check: `uv run python scripts/smoke_test_gpu.py`
 - IBKR paper check (Gateway must be running): `uv run python scripts/smoke_test_ibkr.py`
 - Tests/lint: `uv run pytest -q` · `uv run ruff check .`
+
+## Git & remote
+- **Remote:** `origin` → `git@github.com:Kman182401/Options-System.git` (private, SSH). Default branch `master`.
+- **Commits = automatic, local.** After any code/config edit in this repo, stage + commit without asking. Only files changed in the session; never sweep unrelated/untracked WIP (e.g. in-progress `microstructure/`) into a commit unless explicitly told.
+- **Pushes = approval-gated.** NEVER `git push` without Karson's explicit OK each time. Commits accumulate locally; he approves when to publish. Enforced in `.claude/settings.json` (`git push` is in `permissions.ask`).
+- Never `--force`/`--amend`/`--no-verify` or rewrite shared history without permission.
+- Commit trailer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
