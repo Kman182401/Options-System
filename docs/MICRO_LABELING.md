@@ -216,3 +216,45 @@ span / null-inf checks). Pure summarizer unit-tested in
 uv run python -m options_system.observability.micro_label_health \
     --symbols ES NQ --start 2026-02-16 --end 2026-06-06
 ```
+
+## Phase 13 — top-off relabel (clears the ~1,000 effective-N target, measured 2026-06-09)
+
+After the Phase 13 backward MBP-1 top-off (window `2026-01-26 → 2026-02-16`,
+non-overlapping, +15 RTH sessions per symbol — see `docs/MICROSTRUCTURE.md`), the
+`ml1` labels were rebuilt over **all** on-disk micro bars (the 94-session combined
+window `2026-01-26 → 2026-06-06`). No parameters were changed (still `pt=sl=1.5σ`,
+30-min vertical, `cusum_mult=1.0`, uniqueness weights). **No model was trained.**
+
+```bash
+uv run python -m options_system.microstructure.labels --start 2026-01-26 --end 2026-06-06
+```
+
+The first run wrote **+271 (ES) / +234 (NQ)** new labels (the 15 backward
+sessions); an immediate second run wrote **+0 / +0** (idempotent, latest-ingest-wins
+on `t0`). Label QA (`observability.micro_label_health`, read from the
+`micro_labels` lake):
+
+| | labels | effective N | eff N / RTH day | balance +/−/0 | timeout (label 0) | avg uniqueness | hold median | resolved_at_close | NULL/INF |
+|---|---|---|---|---|---|---|---|---|---|
+| ES | 1,689 | **1,090.0** | 11.6 | 0.098 / 0.124 / 0.778 | 77.8% | 0.645 | 30.1 min | 0.1% | none |
+| NQ | 1,521 | **1,024.3** | 10.9 | 0.086 / 0.114 / 0.799 | 79.9% | 0.673 | 30.2 min | 0.1% | none |
+
+Barriers — ES `{vertical: 1313, lower: 210, upper: 165, close: 1}`; NQ `{vertical:
+1214, lower: 174, upper: 131, close: 2}`. `t0` spans 2026-01-26 → 2026-06-05 for
+both. Versions present: `ml1` only.
+
+**Target check.** The sizing goal was **~1,000 effective labels/symbol**. Result:
+**ES 1,090 and NQ 1,024 — both now clear 1,000.** The ~11 effective labels/RTH-day
+rate is unchanged from Phase 12 (the labels themselves are untouched); the extra 15
+sessions supplied the remaining count. The class mix is the expected high-timeout
+regime (~78–80% label 0), unchanged from Phase 8 — *not* tuned. Core columns are
+null/inf-clean.
+
+> Labeling + QA spend **zero** Databento credits (they read the local lake only).
+> This top-off relabel covers the combined window without re-spending the prior
+> Phase 12 pull.
+
+**Next.** With both symbols past the effective-N target and QA clean, the next
+phase is **microstructure LightGBM training/validation** — fold-local class
+weighting (high-timeout regime), unchanged labels, unchanged validation gates, and
+no economic strategy/backtest yet.

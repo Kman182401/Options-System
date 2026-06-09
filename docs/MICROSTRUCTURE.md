@@ -244,3 +244,47 @@ per-session causal lag is undefined by design; not a data defect.
 > This step spent **$163.82** of real Databento credit (one time). Re-running the
 > ingest over the same window would re-spend it — narrow `--start/--end` to only
 > missing dates instead. QA, labeling, and these docs spend **zero** credits.
+
+## Phase 13 — backward top-off pull (measured 2026-06-09)
+
+Phase 12 landed **916 / 863** effective labels (ES / NQ), just short of the
+~1,000/symbol target. The cheapest fix is a small **non-overlapping** pull, not a
+re-run of the paid window. As of 2026-06-09 there are not enough completed forward
+RTH sessions to extend forward, so this extends **backward** of the paid window.
+**Still a data build + QA only — no model trained.**
+
+**Pull.** Window `2026-01-26 → 2026-02-16` (`[start, end)`, end-exclusive, so it
+stops the day the Phase 12 window starts — **zero overlap**), symbols **ES, NQ**,
+schema `mbp-1`, dataset `GLBX.MDP3`, RTH-only, reduced with `--workers auto`
+(resolved to **8**). 15 weekdays, all with data. Wall-clock ≈ **1,181 s
+(~19.7 min)**. `aborted=False`, no retries/failures.
+
+**Cost (within the $50.00 approved cap; the code's guard was never bypassed).**
+
+| | dry-run estimate | actual est. spend | billable bytes | rows written (this run) | days w/ data |
+|---|---|---|---|---|---|
+| ES | $18.73 | $18.73 | 11,174.5 MB | +21,932 | 15 / 15 |
+| NQ | $21.36 | $21.36 | 12,743.2 MB | +13,588 | 15 / 15 |
+| **TOTAL** | **$40.10** | **$40.10** | **23,917.6 MB (≈23.9 GB)** | **+35,520** | — |
+
+Dry-run cost == actual (both from the free `metadata.get_cost`). MLflow run
+`9bc5a7faf1e04973a32d1a4bae54a1cf`.
+
+**Combined micro-bar QA** (`observability.micro_health`, full lake over
+`2026-01-26 → 2026-06-06`, i.e. the 94-session combined training window):
+
+| | bars | sessions | bars/session median [min..max] | median duration | OFI↔Δmid corr | rolls | incomplete | thin sessions |
+|---|---|---|---|---|---|---|---|---|
+| ES | 126,526 | 94 | 1,356 [75..2,266] | 13.9 s | **0.857** | 1 | 0.07% | 3 |
+| NQ | 80,434 | 94 | 834 [100..1,806] | 21.7 s | **0.688** | 1 | 0.12% | 3 |
+
+Sessions = 94 = the 79 Phase 12 sessions + 15 new backward sessions. The OFI↔Δmid
+sanity correlation stays strongly positive (0.857 / 0.688, in line with Phase 12's
+0.85 / 0.67). The only NaN/inf flagged is `ofi_top_lag1` (94 each) — exactly one
+per session, the **first bar of every session**, where the per-session causal lag
+is undefined by design; not a data defect.
+
+> This top-off spent **$40.10** of real Databento credit on a **narrow,
+> non-overlapping** window. It did **not** re-spend the prior **$163.82** Phase 12
+> window (`2026-02-16 → 2026-06-06`), which stayed untouched. QA, labeling, and
+> these docs spend **zero** credits.
