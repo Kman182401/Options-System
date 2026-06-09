@@ -114,6 +114,69 @@ on `ts_event` per partition (re-running never duplicates), latest-ingest wins on
 read. Query via `microstructure.ingest.read_micro_bars(symbol, start, end)`
 (DuckDB under the hood). The price `feature_version=v1` artifacts are untouched.
 
+## Parallel day reduction (the serial path is the source of truth)
+
+Reducing a day of MBP-1 (millions of best-bid/offer + trade events) to dollar bars
+is **CPU-heavy**; the download is I/O. Before the larger ~4-month pull, the reduction
+is the runtime bottleneck, so it can be run across processes — **without changing a
+single output value.** This is a behavior-preserving speedup: the only acceptable
+difference between the serial and parallel paths is faster wall-clock.
+
+**The serial reducer is the reference implementation.** `build_dollar_bars`,
+`assemble_features`, `from_records`, and the per-day `reduce_work_unit` are unchanged
+math. The parallel path just runs that same per-day reducer in worker processes.
+
+- **The independent unit** is one `(symbol, session-day)` — a `DayWorkUnit`. A whole
+  session-day stream goes to exactly **one** worker (so intrabar order-flow
+  continuity is never split), and two days are never merged into one unit (the
+  reducer already severs flow at every session / contract seam). This is *why*
+  parallelisation is safe only across symbol-days: each unit is fully independent —
+  no shared mutable reducer state, no flow crossing a seam.
+- **The worker** is the module-level, picklable `reduce_work_unit(unit)` — it reads
+  one local DBN file (or, in tests, in-memory events) and returns a fully reduced
+  frame. It makes **no Databento API call** and never touches an Executor/Future.
+- **Reassembly is deterministic.** `reduce_units(...)` places each result back by its
+  input index, so worker completion order never affects output;
+  `reduce_units_to_frame(...)` additionally sorts by `(symbol, ts_event, con_id,
+  ts_open)` — a full ordering, independent of input order too. The lake write stays
+  per-`(symbol, date)` partition, idempotent / latest-ingest-wins, exactly as before.
+- **Budget gating + downloads stay strictly sequential** in `run_ingest` regardless of
+  `--workers`: the `databento_budget_usd_cap` is a running total honoured in order, so
+  a parallel run aborts at the exact same day a serial run would. Only the reduction
+  fans out, in **waves** of `workers` days (≤ `workers` temp files in flight — memory
+  and disk stay bounded; the full multi-month raw set is never materialised).
+
+```bash
+# Serial (default; bit-identical to every prior run):
+uv run python -m options_system.microstructure.ingest --start 2026-05-18 --end 2026-05-23 --confirm
+
+# Parallel reduction with 4 worker processes (same output, faster):
+uv run python -m options_system.microstructure.ingest --start 2026-05-18 --end 2026-05-23 --confirm --workers 4
+
+# Auto worker count = min(cpus, n_tasks, 8):
+uv run python -m options_system.microstructure.ingest --start 2026-05-18 --end 2026-05-23 --confirm --workers auto
+```
+
+`--workers 1` (the default) uses the serial-equivalent path. `--workers >1` enables
+parallel reduction. The dry-run (no `--confirm`) is unchanged — it still estimates
+cost and downloads nothing.
+
+### Proving equivalence offline (zero Databento credits)
+
+`tests/test_microstructure_parallel.py` proves serial == parallel **exactly** on
+synthetic MBP-1 fixtures — no network, no API key, no credits spent:
+
+```bash
+# Behavior-preserving equivalence + determinism + worker-count invariance:
+uv run pytest tests/test_microstructure_parallel.py -q
+```
+
+It asserts bit-identical frames (`polars.testing.assert_frame_equal(check_exact=True,
+check_dtypes=True)` — **no float tolerance**) across `workers=1/2/4`, repeated runs,
+shuffled input order, and the contract-roll / session-boundary / trailing-partial /
+quote-only / empty-day cases. **This step spends zero Databento credits and does not
+run the large pull.**
+
 ## How to regenerate
 
 ```bash
@@ -122,6 +185,7 @@ uv run python -m options_system.microstructure.ingest --start 2026-05-18 --end 2
 
 # Real pull (consumes credits; aborts if over the cap):
 uv run python -m options_system.microstructure.ingest --start 2026-05-18 --end 2026-05-23 --confirm
+# ...add --workers 4 (or auto) to parallelise the reduction; identical output, faster.
 
 # QA / health report:
 uv run python -m options_system.observability.micro_health --symbols ES NQ --start 2026-05-18 --end 2026-05-23

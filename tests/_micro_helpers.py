@@ -61,6 +61,58 @@ def ev(
     )
 
 
+# A second small instrument (different symbol) for multi-symbol parallel tests.
+TEST_INST_U = Instrument(
+    symbol="U",
+    continuous_symbol="U.v.0",
+    exec_symbol="u",
+    multiplier=1.0,
+    tick_size=0.25,
+    dollar_threshold=5000.0,
+)
+
+
+def partial_tail_stream(n_full: int, *, day: int = 0) -> list[BookEvent]:
+    """``n_full`` threshold-closing trades (each 100*60 = 6000 > 5000 ⇒ one bar
+    apiece) followed by ONE sub-threshold trade (100*10 = 1000) — so the stream ends
+    on a trailing **partial** bar (``bar_complete=False``)."""
+    events = [
+        ev(ts(i * 0.001, day=day), trade=(100.0, 60.0, 1 if i % 2 == 0 else -1))
+        for i in range(n_full)
+    ]
+    events.append(ev(ts(n_full * 0.001, day=day), trade=(100.0, 10.0, 1)))  # leftover partial
+    return events
+
+
+def quote_only_then_trades_stream(*, day: int = 0) -> list[BookEvent]:
+    """A mix of **quote-only** events (book moves, no trade) and trades. The opening
+    quote-only events exercise the TWA / OFI accumulators with no trade; trades then
+    close two bars; a trailing sub-threshold trade leaves a partial bar."""
+    events: list[BookEvent] = []
+    t = 0.0
+    for k in range(4):  # quote-only book moves (no trades) -> OFI/TWA accumulate
+        events.append(ev(ts(t, day=day), bid0=100.0 + 0.25 * k, ask0=100.25 + 0.25 * k))
+        t += 0.001
+    for _ in range(2):  # two threshold-closing trades (6000 each)
+        events.append(ev(ts(t, day=day), trade=(100.0, 60.0, 1)))
+        t += 0.001
+    events.append(ev(ts(t, day=day), trade=(100.0, 15.0, -1)))  # trailing partial (1500)
+    return events
+
+
+def roll_within_day_stream(*, day: int = 0) -> list[BookEvent]:
+    """A contract **roll** inside one session: two sub-threshold trades on contract
+    ``iid=1`` (4000 < 5000, so no threshold close), then ``iid=2`` appears — the
+    boundary closes the contract-1 bar and severs order-flow continuity, then
+    contract-2 trades accumulate. Proves boundary behaviour is preserved per-unit."""
+    return [
+        ev(ts(0.000, day=day), iid=1, bid0=100.0, ask0=100.25, trade=(100.0, 20.0, 1)),
+        ev(ts(0.001, day=day), iid=1, bid0=100.25, ask0=100.50, trade=(100.0, 20.0, 1)),
+        ev(ts(0.002, day=day), iid=2, bid0=200.0, ask0=200.25, trade=(200.0, 20.0, 1)),
+        ev(ts(0.003, day=day), iid=2, bid0=200.25, ask0=200.50, trade=(200.0, 15.0, -1)),
+    ]
+
+
 def comoving_stream(n_bars: int) -> list[BookEvent]:
     """A stream where buy pressure (positive OFI) coincides with a rising mid and
     sell pressure with a falling mid — the OFI↔Δmid stylized fact, by construction.

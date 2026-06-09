@@ -30,9 +30,14 @@ record into the O(1)-memory reducer, then the temp file is deleted.
 from __future__ import annotations
 
 import argparse
+import multiprocessing
+import os
 import subprocess
 import tempfile
 import time
+from collections.abc import Sequence
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dtime
 from pathlib import Path
@@ -46,7 +51,7 @@ from config.settings import Settings
 
 from ..common.logging import get_logger
 from ..data.store import DuckStore
-from .bars import assemble_features, build_dollar_bars, feature_names, from_records
+from .bars import BookEvent, assemble_features, build_dollar_bars, feature_names, from_records
 from .config import Instrument, MicrostructureConfig
 
 logger = get_logger(__name__)
@@ -267,14 +272,42 @@ def _resolve_contracts(store, instrument_ids: set[int], day: date) -> dict[int, 
         return {}
 
 
-def ingest_day(client, cfg: MicrostructureConfig, inst: Instrument, day: date) -> pl.DataFrame:
-    """Download one trading day for one instrument, reduce to the bar+feature frame.
+@dataclass(frozen=True)
+class DayWorkUnit:
+    """One **independent** (symbol, session-day) reduction unit — the atom of
+    parallelism. Exactly one record source is set:
 
-    Streams the DBN to a temp file, stream-reads it into the O(1) reducer, deletes
-    the temp file. Returns an (assembled) frame; empty if the day had no records.
+    * ``dbn_path`` — a local DBN file (the production path; the worker stream-reads
+      it, so only the path crosses the process boundary, never the raw records);
+    * ``events`` — an in-memory tuple of :class:`BookEvent` (the synthetic /
+      offline-test path).
+
+    A unit is one **whole** session-day stream: it is never split across workers
+    (order-flow continuity inside a session matters), and two days are never merged
+    into one unit (the reducer already severs flow at session / contract seams).
+    Frozen + only-picklable fields, so it ships safely to a worker process.
     """
-    import databento as db
 
+    symbol: str
+    session_date: date
+    instrument: Instrument
+    cfg: MicrostructureConfig
+    dbn_path: str | None = None
+    events: tuple[BookEvent, ...] | None = None
+    contract_map: dict[int, str] | None = None
+
+    def __post_init__(self) -> None:
+        if (self.dbn_path is None) == (self.events is None):
+            raise ValueError("DayWorkUnit needs exactly one of dbn_path / events")
+
+
+def _download_day(client, cfg: MicrostructureConfig, inst: Instrument, day: date) -> Path:
+    """Download one trading day for one instrument to a temp DBN file; return its
+    path. This is the **only** network step (Databento ``get_range``), with retry /
+    backoff. Raises on persistent failure. The caller owns the temp file lifecycle
+    (delete it after reducing). Kept separate from the reducer so the CPU-heavy
+    reduction can run in a worker process while this stays serial + budget-gated.
+    """
     lo, hi = _fetch_window(cfg, day)
     tmp = Path(tempfile.gettempdir()) / f"mbp1-{inst.symbol}-{day}-{uuid4().hex}.dbn.zst"
     last: Exception | None = None
@@ -298,15 +331,133 @@ def ingest_day(client, cfg: MicrostructureConfig, inst: Instrument, day: date) -
                 time.sleep(cfg.ingest.backoff_s * attempt)
     if last is not None:
         raise last
-    try:
-        store = db.DBNStore.from_file(str(tmp))
+    return tmp
+
+
+def reduce_work_unit(unit: DayWorkUnit) -> pl.DataFrame:
+    """Reduce ONE independent (symbol, session-day) unit to its assembled feature
+    frame. This is the **process-pool worker**: module-level + picklable, network-
+    free (the ``dbn_path`` branch only *reads* a local file — no Databento API
+    call), and it never touches an Executor/Future. It calls the same unchanged
+    reducer the serial path does, so its output is bit-identical to serial.
+    """
+    inst = unit.instrument
+    cfg = unit.cfg
+    if unit.events is not None:
+        raw_bars = build_dollar_bars(unit.events, instrument=inst, session=cfg.session)
+        cmap: dict[int, str] = unit.contract_map or {}
+    else:
+        import databento as db
+
+        assert unit.dbn_path is not None  # guaranteed by __post_init__
+        store = db.DBNStore.from_file(unit.dbn_path)
         raw_bars = build_dollar_bars(
             from_records(store, inst), instrument=inst, session=cfg.session
         )
-        cmap = _resolve_contracts(store, {b["instrument_id"] for b in raw_bars}, day)
-        return assemble_features(raw_bars, symbol=inst.symbol, cfg=cfg, contract_map=cmap)
+        cmap = (
+            unit.contract_map
+            if unit.contract_map is not None
+            else _resolve_contracts(
+                store, {b["instrument_id"] for b in raw_bars}, unit.session_date
+            )
+        )
+    return assemble_features(raw_bars, symbol=inst.symbol, cfg=cfg, contract_map=cmap)
+
+
+def ingest_day(client, cfg: MicrostructureConfig, inst: Instrument, day: date) -> pl.DataFrame:
+    """Download one trading day for one instrument, reduce to the bar+feature frame.
+
+    The **serial reference path**: download the DBN to a temp file, stream-read it
+    into the O(1) reducer, delete the temp file. Output is identical to the parallel
+    path — both funnel through :func:`reduce_work_unit`. Returns an (assembled)
+    frame; empty if the day had no records.
+    """
+    tmp = _download_day(client, cfg, inst, day)
+    try:
+        return reduce_work_unit(
+            DayWorkUnit(
+                symbol=inst.symbol,
+                session_date=day,
+                instrument=inst,
+                cfg=cfg,
+                dbn_path=str(tmp),
+            )
+        )
     finally:
         tmp.unlink(missing_ok=True)
+
+
+# --- parallel reduction across independent (symbol, session-day) units ------ #
+
+# Beyond this many processes MBP-1 day reduction is bound by DBN I/O + result
+# pickling, not CPU, so more workers only add fork + serialisation overhead.
+_MAX_AUTO_WORKERS = 8
+
+
+def _auto_workers(n_tasks: int) -> int:
+    """Conservative auto worker count: ``min(cpus, n_tasks, _MAX_AUTO_WORKERS)``,
+    floored at 1. Uses ``os.process_cpu_count`` (affinity-aware, Python ≥3.13) when
+    present, else ``os.cpu_count`` (this host is on 3.12)."""
+    cpu_fn = getattr(os, "process_cpu_count", None) or os.cpu_count
+    cpu = cpu_fn() or 1
+    return max(1, min(cpu, max(1, n_tasks), _MAX_AUTO_WORKERS))
+
+
+def reduce_units(units: Sequence[DayWorkUnit], *, workers: int = 1) -> list[pl.DataFrame]:
+    """Reduce independent units to per-unit feature frames, returned in **input
+    order** — deterministic and independent of worker completion order.
+
+    * ``workers <= 1`` → the serial reference path (direct :func:`reduce_work_unit`).
+    * ``workers > 1`` → a :class:`~concurrent.futures.ProcessPoolExecutor` across
+      units; each result is placed back by its input index, so the output never
+      depends on which worker finished first. Memory stays bounded: at most
+      ``workers`` units (each one session-day) are reduced concurrently.
+
+    A worker exception propagates unchanged (via ``Future.result()``).
+    """
+    n = len(units)
+    if n == 0:
+        return []
+    if workers <= 1:
+        return [reduce_work_unit(u) for u in units]
+    workers = min(workers, n)
+    results: list[pl.DataFrame | None] = [None] * n
+    # Use 'spawn', NOT the Linux-default 'fork': the reducer calls into polars, whose
+    # Rayon threadpool deadlocks when inherited across a fork() in a worker. Spawn
+    # starts each worker as a fresh interpreter (no inherited threadpool, no
+    # deadlock); the small startup cost is negligible against per-day reduction work.
+    ctx = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as ex:
+        fut_to_idx = {ex.submit(reduce_work_unit, u): i for i, u in enumerate(units)}
+        for fut in as_completed(fut_to_idx):
+            results[fut_to_idx[fut]] = fut.result()
+    out: list[pl.DataFrame] = []
+    for r in results:
+        assert r is not None  # every index filled, or fut.result() raised above
+        out.append(r)
+    return out
+
+
+def reduce_units_to_frame(
+    units: Sequence[DayWorkUnit],
+    *,
+    workers: int = 1,
+    cfg: MicrostructureConfig | None = None,
+) -> pl.DataFrame:
+    """Reduce units and concatenate into ONE feature frame in a **canonical** order
+    that is independent of both worker-completion order and unit input order: sorted
+    by ``(symbol, ts_event, con_id, ts_open)`` (a full ordering — no ties). Useful
+    as a single equivalence surface; the lake writer still partitions per
+    (symbol, date) exactly as before. Empty when every unit reduced to no bars."""
+    frames = reduce_units(units, workers=workers)
+    nonempty = [f for f in frames if f.height > 0]
+    if not nonempty:
+        c = cfg if cfg is not None else (units[0].cfg if units else None)
+        if c is None:
+            raise ValueError("reduce_units_to_frame: no units and no cfg to build empty schema")
+        return assemble_features([], symbol="", cfg=c)
+    combined = pl.concat(nonempty, how="vertical")
+    return combined.sort(["symbol", "ts_event", "con_id", "ts_open"])
 
 
 # --- driver ----------------------------------------------------------------- #
@@ -320,12 +471,24 @@ def run_ingest(
     *,
     api_key: str,
     cap: float,
+    workers: int = 1,
 ) -> dict:
     """Ingest ``[start, end)`` for ``symbols`` under the budget cap. Estimates each
     day chunk before downloading and aborts (cleanly) if the cap would be breached.
 
+    ``workers`` controls the **reduction** stage only: ``1`` (default) is the
+    unchanged serial path; ``>1`` reduces downloaded days in parallel processes via
+    :func:`_run_ingest_parallel`. Budget gating + downloads stay strictly sequential
+    in both — the cap is a running total that must be honoured in order, and the
+    per-day reduced output is identical either way.
+
     Returns ``{symbols: {...}, "_totals": {...}}``.
     """
+    if workers > 1:
+        return _run_ingest_parallel(
+            cfg, symbols, start, end, api_key=api_key, cap=cap, workers=workers
+        )
+
     import databento as db
 
     client = db.Historical(api_key)
@@ -381,6 +544,106 @@ def run_ingest(
     }
 
 
+def _run_ingest_parallel(
+    cfg: MicrostructureConfig,
+    symbols: list[str],
+    start: date,
+    end: date,
+    *,
+    api_key: str,
+    cap: float,
+    workers: int,
+) -> dict:
+    """Parallel-reduce variant of :func:`run_ingest`. Budget gating + downloads stay
+    STRICTLY SEQUENTIAL in the same (symbol-major, day-ascending) order as the serial
+    path — only the CPU-heavy per-day reduction is parallelised, in **waves** of
+    ``workers`` days so at most ``workers`` temp DBN files / day-frames are ever in
+    flight (memory + disk stay bounded). The reduced output and lake writes are
+    identical to serial; only wall-clock differs.
+
+    The returned stats dict pre-includes every requested symbol (zero-filled) even
+    past a budget abort — a cosmetic difference from serial (which omits unreached
+    symbols); the bars written to the lake are identical.
+    """
+    import databento as db
+
+    client = db.Historical(api_key)
+    days = _trading_days(start, end)
+    per_symbol: dict[str, dict] = {
+        sym: {
+            "rows_written": 0,
+            "days_requested": len(days),
+            "days_with_data": 0,
+            "dollar_threshold": cfg.instrument(sym).dollar_threshold,
+            "est_usd": 0.0,
+            "billable_bytes": 0,
+        }
+        for sym in symbols
+    }
+    # Flat task list in the exact serial order, so budget gating aborts at the same
+    # cumulative point regardless of worker count.
+    tasks = [(sym, day) for sym in symbols for day in days]
+    running_usd = 0.0
+    running_bytes = 0
+    aborted = False
+    i = 0
+    while i < len(tasks) and not aborted:
+        wave: list[DayWorkUnit] = []
+        while len(wave) < workers and i < len(tasks):
+            sym, day = tasks[i]
+            inst = cfg.instrument(sym)
+            chunk_usd = _chunk_cost(client, cfg, inst, day)
+            try:
+                check_budget(running_usd, chunk_usd, cap)
+            except BudgetExceededError as exc:
+                logger.warning(f"budget cap reached before {sym} {day}: {exc}")
+                aborted = True
+                break
+            running_usd += chunk_usd
+            per_symbol[sym]["est_usd"] += chunk_usd
+            chunk_bytes = _chunk_bytes(client, cfg, inst, day)
+            running_bytes += chunk_bytes
+            per_symbol[sym]["billable_bytes"] += chunk_bytes
+            tmp = _download_day(client, cfg, inst, day)
+            wave.append(
+                DayWorkUnit(
+                    symbol=sym,
+                    session_date=day,
+                    instrument=inst,
+                    cfg=cfg,
+                    dbn_path=str(tmp),
+                )
+            )
+            i += 1
+        if not wave:
+            break
+        frames = reduce_units(wave, workers=workers)
+        for unit, df in zip(wave, frames, strict=True):
+            try:
+                if df.is_empty():
+                    logger.info(f"{unit.symbol} {unit.session_date}: no bars")
+                    continue
+                n = write_micro_bars(df, unit.symbol)
+                per_symbol[unit.symbol]["rows_written"] += n
+                per_symbol[unit.symbol]["days_with_data"] += 1
+                logger.info(
+                    f"{unit.symbol} {unit.session_date}: +{n} bars "
+                    f"(running ${running_usd:.2f}, {running_bytes / 1e6:.1f} MB)"
+                )
+            finally:
+                if unit.dbn_path is not None:
+                    Path(unit.dbn_path).unlink(missing_ok=True)
+    return {
+        **per_symbol,
+        "_totals": {
+            "est_usd": running_usd,
+            "billable_bytes": running_bytes,
+            "cap_usd": cap,
+            "aborted": aborted,
+        },
+    }
+
+
 def log_ingest_stats(cfg: MicrostructureConfig, stats: dict, start: date, end: date) -> str | None:
     """Log dataset-level stats (incl. cost) to the local MLflow file store (best-effort)."""
     try:
@@ -421,6 +684,21 @@ def log_ingest_stats(cfg: MicrostructureConfig, stats: dict, start: date, end: d
         return run.info.run_id
 
 
+def _workers_arg(v: str) -> int | str:
+    """argparse type for ``--workers``: a positive int, or the literal ``auto``."""
+    if v.strip().lower() == "auto":
+        return "auto"
+    try:
+        iv = int(v)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"--workers must be a positive int or 'auto', got {v!r}"
+        ) from exc
+    if iv < 1:
+        raise argparse.ArgumentTypeError("--workers must be >= 1")
+    return iv
+
+
 def _parse(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="microstructure.ingest", description=__doc__)
     p.add_argument("--symbols", nargs="+", default=None, help="default: all config instruments")
@@ -428,6 +706,12 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--end", help="YYYY-MM-DD (UTC, exclusive); default: config window.end")
     p.add_argument("--confirm", action="store_true", help="actually download (consumes credits)")
     p.add_argument("--cap", type=float, default=None, help="override databento_budget_usd_cap")
+    p.add_argument(
+        "--workers",
+        type=_workers_arg,
+        default=1,
+        help="reduction processes: 1 (default, serial-equivalent) | N>1 (parallel) | 'auto'",
+    )
     return p.parse_args(argv)
 
 
@@ -440,6 +724,8 @@ def main(argv: list[str] | None = None) -> int:
     start = date.fromisoformat(args.start) if args.start else cfg.window.start
     end = date.fromisoformat(args.end) if args.end else cfg.window.end
     cap = args.cap if args.cap is not None else cfg.databento_budget_usd_cap
+    n_tasks = len(symbols) * len(_trading_days(start, end))
+    workers = _auto_workers(n_tasks) if args.workers == "auto" else int(args.workers)
 
     api_key = _get_api_key(settings)
     if api_key is None:
@@ -463,10 +749,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"REFUSING: estimate ${total:.2f} exceeds cap ${cap:.2f}. Narrow the window.")
         return 2
     if not args.confirm:
-        print("Dry run — nothing downloaded. Re-run with --confirm to ingest (consumes credits).")
+        print(
+            f"Dry run — nothing downloaded. Re-run with --confirm to ingest "
+            f"(consumes credits). [workers={workers}]"
+        )
         return 0
 
-    stats = run_ingest(cfg, symbols, start, end, api_key=api_key, cap=cap)
+    stats = run_ingest(cfg, symbols, start, end, api_key=api_key, cap=cap, workers=workers)
     run_id = log_ingest_stats(cfg, stats, start, end)
     totals = stats["_totals"]
     for sym in symbols:
