@@ -28,6 +28,7 @@ import polars as pl
 
 from config.settings import Settings
 
+from ..common.databento_guard import assert_spend_authorized
 from .lake import SCHEMA_VERSION, Lake
 from .recorder import session_for
 
@@ -138,6 +139,10 @@ def _get_range_with_retry(client, *, symbols, schema, start, end, retries=3, bac
 
 
 def _download_and_store(client, symbols: list[str], schema: str, start: str, end: str) -> int:
+    # FAIL-CLOSED billing guard: refuse the real download unless explicitly authorized.
+    # Databento bills per byte to the key's account; this code cannot tell free credits
+    # from a real card. See options_system.common.databento_guard (2026-06-09 incident).
+    assert_spend_authorized(f"daily backfill {symbols} {schema} {start}..{end}")
     lake = Lake()
     dataset = _SCHEMA_TO_DATASET[schema]
     written = 0

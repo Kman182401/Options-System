@@ -49,6 +49,7 @@ import polars as pl
 
 from config.settings import Settings
 
+from ..common.databento_guard import assert_spend_authorized
 from ..common.logging import get_logger
 from ..data.store import DuckStore
 from .bars import BookEvent, assemble_features, build_dollar_bars, feature_names, from_records
@@ -484,6 +485,12 @@ def run_ingest(
 
     Returns ``{symbols: {...}, "_totals": {...}}``.
     """
+    # FAIL-CLOSED billing guard: refuse any real (billable) download unless the
+    # operator has explicitly attested the Databento account is safe to spend on
+    # (free credits / hard limit / no card). The dollar cap alone does NOT know
+    # whether bytes are billed to free credits or a real card. See the 2026-06-09
+    # incident note in options_system.common.databento_guard.
+    assert_spend_authorized(f"microstructure ingest {symbols} {start}..{end} (cap ${cap:.2f})")
     if workers > 1:
         return _run_ingest_parallel(
             cfg, symbols, start, end, api_key=api_key, cap=cap, workers=workers
