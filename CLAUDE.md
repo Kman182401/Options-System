@@ -51,7 +51,7 @@ Python 3.12 (uv) · ib_async · nautilus_trader · lightgbm · polars/pandas · 
 
 ## Git & remote
 - **Remote:** `origin` → `git@github.com:Kman182401/Options-System.git` (private, SSH). Default branch `master`.
-- **Commits = automatic, local.** After any code/config edit in this repo, stage + commit without asking. Only files changed in the session; never sweep unrelated/untracked WIP (e.g. in-progress `microstructure/`) into a commit unless explicitly told.
-- **Pushes = approval-gated.** NEVER `git push` without Karson's explicit OK each time. Commits accumulate locally; he approves when to publish. Enforced in `.claude/settings.json` (`git push` is in `permissions.ask`).
-- Never `--force`/`--amend`/`--no-verify` or rewrite shared history without permission.
+- **Commits = automatic, local.** After any code/config edit in this repo, stage + commit without asking. Only files changed in the session; never sweep unrelated/untracked WIP into a commit unless explicitly told.
+- **Pushes = automatic (since 2026-06-09, Karson's standing request).** After committing, `git push` to `origin master` without asking, so GitHub stays current with local state. Push at the end of each applicable unit of work (after the gate passes — ruff/ty/pytest green where applicable), not mid-task. `.claude/settings.json` allows `git push` (force-push variants stay denied). Before pushing: working tree committed, no secrets in the diff (`data/` is gitignored; keys live in `pass`), gate green.
+- Never `--force`/`--amend`/`--no-verify`, `--mirror`, `--delete`, or rewrite/delete shared history/branches (still denied in settings; needs explicit per-time OK).
 - Commit trailer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
