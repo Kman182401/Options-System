@@ -203,3 +203,44 @@ Short-horizon **triple-barrier labels** (vertical barrier ~15–30 min, σ scale
 intraday vol) built on top of these bars — then a model and an honest verdict.
 The bars carry `mid_close` / `dmid` / `duration_s` so that labeling is
 straightforward.
+
+## Phase 12 — extended 80-RTH-day MBP-1 pull (measured 2026-06-09)
+
+The first real cost-gated expansion beyond the Phase 7 proof slice, to size the
+microstructure experiment. **This was a data build + QA only — no model trained.**
+
+**Pull.** Window `2026-02-16 → 2026-06-06` (`[start, end)`, ~80 weekdays), symbols
+**ES, NQ**, schema `mbp-1`, dataset `GLBX.MDP3`, RTH-only, reduced with `--workers
+auto` (resolved to **8**). Wall-clock ≈ **5,708 s (~95 min)**.
+
+**Cost (within the $200 approved cap; the code's guard was never bypassed).**
+
+| | dry-run estimate | actual est. spend | billable bytes | rows written (this run) | days w/ data |
+|---|---|---|---|---|---|
+| ES | $76.42 | $76.42 | 45,584.5 MB | +96,808 | 79 / 80 |
+| NQ | $87.40 | $87.40 | 52,138.5 MB | +61,448 | 79 / 80 |
+| **TOTAL** | **$163.82** | **$163.82** | **97,723 MB (≈97.7 GB)** | **+158,256** | — |
+
+`aborted=False`. The one no-data day each is **Good Friday (2026-04-03)**; the
+2026-05-18…22 days wrote **+0** (idempotent dedup against the Phase 7 slice — proof
+the lake write is latest-ingest-wins). Dry-run cost == actual (both come from the
+free `metadata.get_cost`).
+
+**Micro-bar QA** (`observability.micro_health`, full lake over the window):
+
+| | bars | sessions | bars/session median [min..max] | median duration | OFI↔Δmid corr | rolls | incomplete | thin sessions |
+|---|---|---|---|---|---|---|---|---|
+| ES | 104,595 | 79 | 1,325 [75..2,266] | 14.2 s | **0.849** | 1 | 0.07% | 3 |
+| NQ | 66,846 | 79 | 831 [100..1,806] | 22.0 s | **0.673** | 1 | 0.12% | 3 |
+
+(Lake bar counts exceed the rows-written-this-run by the pre-existing Phase 7
+2026-05-18…22 slice.) The headline **OFI↔Δmid sanity correlation is strongly
+positive** for both (0.85 / 0.67, consistent with Phase 7's 0.88 / 0.73) — the
+construction is sound. Thin sessions are the three holidays/half-days (Presidents
+Day 02-16, Memorial Day 05-25, and the 03-16/17 low-volume pair). The only NaN/inf
+flagged is `ofi_top_lag1` (79 each) — the **first bar of every session**, where the
+per-session causal lag is undefined by design; not a data defect.
+
+> This step spent **$163.82** of real Databento credit (one time). Re-running the
+> ingest over the same window would re-spend it — narrow `--start/--end` to only
+> missing dates instead. QA, labeling, and these docs spend **zero** credits.

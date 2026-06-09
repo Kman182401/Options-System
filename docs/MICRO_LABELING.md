@@ -171,3 +171,48 @@ uv run python -m options_system.microstructure.labels --start 2026-05-18 --end 2
 Label-config + QA stats (params, events, balance, avg uniqueness, effective N) are
 logged to the local MLflow file store (`data/mlruns`, experiment `micro-labels`).
 No model is trained here — that is Prompt 9.
+
+## Phase 12 — relabel over the extended dataset (measured 2026-06-09)
+
+After the Phase 12 MBP-1 pull (window `2026-02-16 → 2026-06-06`, ES/NQ, ~79 RTH
+sessions with data — see `docs/MICROSTRUCTURE.md`), the `ml1` labels were rebuilt
+over **all** on-disk micro bars. No parameters were changed (still `pt=sl=1.5σ`,
+30-min vertical, `cusum_mult=1.0`, uniqueness weights). **No model was trained.**
+
+```bash
+uv run python -m options_system.microstructure.labels --start 2026-02-16 --end 2026-06-06
+```
+
+Re-running the exact command wrote **+0 rows** (idempotent, latest-ingest-wins on
+`t0`). Label QA (`observability.micro_label_health`, read from the `micro_labels`
+lake):
+
+| | labels | effective N | eff N / RTH day | balance +/−/0 | timeout (label 0) | avg uniqueness | hold median | resolved_at_close | NULL/INF |
+|---|---|---|---|---|---|---|---|---|---|
+| ES | 1,418 | **916.3** | 11.6 | 0.099 / 0.121 / 0.781 | ~78% | 0.646 | 30.1 min | 0.1% | none |
+| NQ | 1,287 | **862.9** | 10.9 | 0.089 / 0.110 / 0.801 | ~80% | 0.670 | 30.2 min | 0.2% | none |
+
+Barriers — ES `{vertical: 1106, lower: 171, upper: 140, close: 1}`; NQ `{vertical:
+1029, lower: 142, upper: 114, close: 2}`. `t0` spans 2026-02-16 → 2026-06-05 for
+both. Versions present: `ml1` only.
+
+**Target check.** The pull was sized to reach **~1,000 effective labels/symbol**.
+Result: **ES 916 (≈92%), NQ 863 (≈86%) — near, but not quite reached.** The 30-min
+horizon + CUSUM sampling + ~0.65 average uniqueness yields ~11 effective labels per
+RTH day, so the ~79-session window lands just short of 1,000. The class mix is the
+expected high-timeout regime (~78–80% label 0), unchanged from Phase 8 — *not*
+tuned. Core columns are null/inf-clean.
+
+> Labeling + QA spend **zero** Databento credits (they read the local lake only).
+
+### Read-only label-QA CLI (added Phase 12)
+
+`src/options_system/observability/micro_label_health.py` reads the `micro_labels`
+lake and reports the table above (reusing `labels.label_qa`, plus version / `t0`
+span / null-inf checks). Pure summarizer unit-tested in
+`tests/test_micro_label_health.py`.
+
+```bash
+uv run python -m options_system.observability.micro_label_health \
+    --symbols ES NQ --start 2026-02-16 --end 2026-06-06
+```
