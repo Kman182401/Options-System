@@ -258,3 +258,10 @@ null/inf-clean.
 phase is **microstructure LightGBM training/validation** — fold-local class
 weighting (high-timeout regime), unchanged labels, unchanged validation gates, and
 no economic strategy/backtest yet.
+
+**Phase 14 (done, 2026-06-09).** That model was built and validated on these labels
+— a 3-class LightGBM (`micro_model_version=mm1`) with fold-local class weighting,
+judged through purged K-fold / CPCV / PBO / DSR on a gross signal-return proxy. The
+honest verdict is **no significant edge** for both ES and NQ (ES fails 4 of 6 gates;
+NQ passes 5 of 6 but the CPCV path distribution is negative on every path). The
+labels themselves were unchanged. Full result + interpretation: `docs/MICRO_MODEL.md`.

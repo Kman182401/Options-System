@@ -1,0 +1,97 @@
+# Microstructure signal-model configuration (declarative, versioned).
+#
+# Loaded by microstructure/model_config.py into a typed MicroModelConfig. This
+# describes the Phase-14 SHORT-HORIZON microstructure signal model and the HONEST
+# evaluation that judges it. It is a SEPARATE model from the daily price/macro/TA
+# model (config/models.yaml): different bars (MBP-1 dollar bars), different labels
+# (micro triple-barrier ml1, ~30-min horizon), a 3-CLASS target, and fold-local
+# class weighting for the ~78-80% timeout regime.
+#
+# It is NOT a strategy and NOT an economic backtest. The return metrics are a GROSS
+# signal-return proxy (pred_class * realized return to the barrier), with NO
+# commissions or slippage. Every search config is a TRIAL counted by the Deflated
+# Sharpe Ratio. Bump `micro_model_version` whenever a change would alter the fitted
+# model or the reported numbers, so saved runs stay self-describing.
+#
+# ANTI-SNOOPING: the verdict thresholds below are fixed A PRIORI (before any model
+# is trained on this dataset). Do NOT tune them after seeing results.
+
+micro_model_version: "mm1"
+
+# --- 3-class target (NOT folded into a directional binary) ------------------
+# Micro labels are {-1, 0, +1} = lower-barrier / vertical-timeout-or-close /
+# upper-barrier. Predicted class IS the signal: -1 short, 0 flat/no-trade, +1 long.
+# Timeout rows are kept (they are the dominant, ~78-80% class) and modelled, not
+# dropped and not collapsed by sign.
+target:
+  mode: multiclass_3
+  classes: [-1, 0, 1]
+
+# --- Fold-local class weighting (the timeout class is ~78-80%) ----------------
+# Class weights are computed INSIDE each training fold from y_train ONLY (never
+# globally), then MULTIPLIED into the persisted uniqueness/sample weights. With
+# use_sample_weight_in_balance the balance is itself sample-weighted (so a class's
+# effective mass, not its raw count, is equalised).
+class_weighting:
+  enabled: true
+  method: balanced_fold_local
+  use_sample_weight_in_balance: true
+
+# --- LightGBM base params (deliberately, heavily regularised) ----------------
+# Shallow trees, large leaves, L1+L2, sub-1 bagging/feature fractions. With only
+# ~1,000 effective labels/symbol vs 17 features the goal is a model that *cannot*
+# overfit. n_estimators is an UPPER BOUND trimmed by early stopping inside folds.
+# num_class is recorded for self-description; the LightGBM estimator INFERS the
+# class count from each fold's y (so a fold missing a class never errors).
+lgbm:
+  objective: multiclass
+  num_class: 3
+  n_estimators: 600
+  learning_rate: 0.02
+  max_depth: 3
+  num_leaves: 7
+  min_child_samples: 100
+  subsample: 0.7
+  subsample_freq: 1
+  colsample_bytree: 0.7
+  reg_alpha: 1.0
+  reg_lambda: 10.0
+  max_bin: 127
+  n_jobs: 1
+  seed: 7
+
+# --- Early stopping (INSIDE each CV training fold) ---------------------------
+# A PURGED chronological tail of the training fold is the early-stopping
+# validation block; training rows whose [t0,t1] overlap that tail are purged, so
+# neither the test fold nor the inner-val block can leak into the fit. The
+# early-stopping eval weights use the SAME fold-local class mapping.
+early_stopping:
+  enabled: true
+  rounds: 50
+  inner_val_fraction: 0.2
+
+# --- Hyperparameter search (SMALL, regularisation-focused) -------------------
+# 2 * 2 * 2 = 8 configs => n_trials = 8, all counted for the Deflated Sharpe Ratio
+# and the PBO. Selection is on pooled out-of-sample GROSS signal Sharpe (no
+# test-fold peeking — the search runs inside the purged K-fold).
+search:
+  enabled: true
+  selection_metric: gross_signal_sharpe
+  grid:
+    max_depth: [2, 3]
+    min_child_samples: [50, 150]
+    reg_lambda: [5.0, 20.0]
+
+# --- VERDICT thresholds (an "edge candidate" must clear ALL of these) ---------
+# Fixed a priori. "edge candidate" authorises ONLY the next phase (an economic
+# backtest with realistic costs/slippage) — it does NOT authorise live trading.
+verdict:
+  max_pbo: 0.5                                   # selection not overfit (PBO -> 0 is robust)
+  min_gross_dsr: 0.5                             # Deflated Sharpe of pooled gross signal returns
+  require_positive_gross_return: true            # mean gross signal return > 0
+  min_action_rate: 0.03                          # >= 3% of predictions are non-flat (not all timeout)
+  min_macro_f1: 0.20                             # 3-class macro F1 floor (not just majority-class acc)
+  require_cpcv_median_gross_sharpe_positive: true  # CPCV path-distribution median gross Sharpe > 0
+
+# --- Determinism ------------------------------------------------------------
+seed: 7
