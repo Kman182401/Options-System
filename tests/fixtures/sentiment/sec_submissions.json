@@ -1,0 +1,16 @@
+{
+  "cik": 320193,
+  "name": "Apple Inc.",
+  "tickers": ["AAPL"],
+  "filings": {
+    "recent": {
+      "accessionNumber": ["0000320193-26-000010", "0000320193-26-000011"],
+      "filingDate": ["2026-02-01", "2026-02-15"],
+      "acceptanceDateTime": ["2026-02-01T16:30:00.000Z", "2026-02-15T08:00:00.000Z"],
+      "form": ["8-K", "10-Q"],
+      "primaryDocument": ["aapl-8k.htm", "aapl-10q.htm"],
+      "primaryDocDescription": ["Current report", "Quarterly report"],
+      "items": ["2.02", ""]
+    }
+  }
+}

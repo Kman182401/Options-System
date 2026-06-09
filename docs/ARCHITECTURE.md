@@ -291,7 +291,7 @@ Phase 6. ISM is excluded (removed from FRED in 2016 over licensing).
 | model inputs | `features/` | leakage-safe, point-in-time price + macro-event features |
 | learning target | `labeling/` | triple-barrier labels (CUSUM events, uniqueness weights) |
 | honest evaluation | `validation/` | purged/embargoed CV, CPCV, PBO/PSR/DSR (leak-safe) |
-| text sentiment | `sentiment/` | FinBERT (GPU), optional 8B via Ollama |
+| text/news sentiment | `sentiment/` | **Phase 15 zero-spend scaffold:** fail-closed GDELT/SEC-EDGAR adapters + point-in-time event schema + local FinBERT / deterministic Fake scorer. No model verdict yet — see `docs/SENTIMENT.md` |
 | signal model | `models/` | regularized LightGBM directional signal + honest CPCV/PBO/DSR verdict (registry/champion–challenger deferred) |
 | decisions | `strategy/` | nautilus Strategy (Claude-researched later) |
 | safety | `risk/` | sizing, caps, kill-switch, broker-side stops |
@@ -301,4 +301,6 @@ Phase 6. ISM is excluded (removed from FRED in 2016 over licensing).
 
 Typed configuration for all of it is in `config/` (`settings.py` + `config.yaml`),
 loaded once and shared. See `CLAUDE.md` for the project anchor and `docs/` for the
-glossary, decisions, and setup.
+glossary, decisions, and setup. Research status is locked in
+`docs/RESEARCH_VERDICTS.md` (four no-edge levers; no promoted model), and paid-data
+guards in `docs/BILLING_SAFETY.md`.

@@ -1,0 +1,63 @@
+# News / sentiment layer configuration (declarative, versioned). ZERO-SPEND PHASE.
+#
+# Loaded by sentiment/config.py into a typed SentimentConfig. This layer is the
+# next candidate "genuinely new information" lever after four honest no-edge results
+# (price, macro, TA, microstructure — see docs/RESEARCH_VERDICTS.md). THIS PHASE IS
+# SCAFFOLD ONLY: no model verdict, no strategy, no broad ingestion, no paid calls.
+#
+# Source policy is enforced in code by options_system.common.external_data_policy
+# (which is the authoritative source of truth and fails closed on unknown sources).
+# The mapping below is declarative documentation; it is cross-checked against the
+# code, never trusted over it. Network access is OFF by default and only ever happens
+# for a free_no_auth source when --allow-network is explicitly passed.
+
+sentiment_feature_version: "s1"
+
+# Candidate sources for design/scaffold only (all free / no-auth or local).
+default_sources:
+  - gdelt
+  - sec_edgar
+
+# Policy per source (must agree with external_data_policy.DEFAULT_REGISTRY).
+source_policy:
+  gdelt: free_no_auth          # free/open global news metadata + tone
+  sec_edgar: free_no_auth      # data.sec.gov — no API key, just a UA header
+  finbert_local: local_only    # local FinBERT weights; never hits the network
+  finnhub: paid_blocked        # credentialed/paid — blocked
+  databento: paid_blocked      # paid per-byte — blocked (see databento_guard)
+
+# Default scaffold window (used only for dry-run plans / fixture labelling).
+windows:
+  start: "2026-01-26"
+  end: "2026-06-06"
+
+# Topics the adapters would query (used to label fixtures + future bounded fetches).
+query_topics:
+  - fed
+  - inflation
+  - rates
+  - recession
+  - earnings
+  - ai_capex
+  - semiconductors
+  - megacap_tech
+  - risk_off
+
+# Local scoring model. local_only => never downloads weights silently; if the
+# weights are absent the scorer fails with instructions (see scoring.py).
+scoring:
+  model: "ProsusAI/finbert"
+  labels: [positive, negative, neutral]
+  local_only: true
+
+# Lake dataset names (under data/, gitignored). Raw text and scores are separate.
+storage:
+  raw_dataset: "sentiment_raw"
+  scored_dataset: "sentiment_scores"
+
+# Bounded fetch limits (a real fetch, behind --allow-network, must respect these).
+# In this phase they only shape dry-run plans; no fetch is performed.
+fetch_limits:
+  max_records: 250            # hard cap on records per bounded fetch
+  default_language: "eng"     # GDELT language code; null = any
+  sec_user_agent: "Options-System research (contact: set-in-env)"  # SEC requires a UA

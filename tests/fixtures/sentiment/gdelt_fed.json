@@ -1,0 +1,42 @@
+{
+  "articles": [
+    {
+      "url": "https://example.com/fed-holds-rates",
+      "title": "Fed signals rates hold as inflation cools",
+      "seendate": "20260203T143000Z",
+      "domain": "example.com",
+      "language": "English",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://news.example/recession-fears",
+      "title": "Recession fears grow after weak jobs data",
+      "seendate": "20260204T091500Z",
+      "domain": "news.example",
+      "language": "English",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://market.example/earnings-beat",
+      "title": "Megacap stocks surge on strong earnings beat",
+      "seendate": "20260205T120000Z",
+      "domain": "market.example",
+      "language": "English",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://example.com/fed-holds-rates",
+      "title": "Fed signals rates hold as inflation cools",
+      "seendate": "20260203T143000Z",
+      "domain": "example.com",
+      "language": "English",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "",
+      "title": "",
+      "seendate": "",
+      "language": "English"
+    }
+  ]
+}
