@@ -160,11 +160,78 @@ would inflate OOS accuracy, not depress it). The productive levers remain news /
 sentiment, microstructure (likely with a shorter-horizon label), or options
 structure — each tested through this same harness.
 
+## Phase 10 — opt-in TA v2 controlled experiment
+
+Phase 10 wires the isolated **v2 technical-analysis layer** (`docs/TA_FEATURES.md`,
+`data/ta_features/`) into this exact verdict as an **opt-in, non-default** experiment.
+It changes *inputs only* — same labels, same CV, same LightGBM config, same PBO / DSR /
+CPCV / excess-over-beta gates, same thresholds.
+
+**TA is additive and opt-in.** The default model is unchanged: `load_training_matrix`
+defaults to `with_ta=False`, the default `models.run` invocation is still the canonical
+price+macro baseline, and the canonical `<symbol>.json` verdict file is never overwritten
+by the TA experiment (the candidate is saved as `<symbol>_macro_ta.json`, the comparison as
+`<symbol>_ta_comparison.json`). TA columns are appended *after* price and macro, NaN-during-
+warmup is tolerated (no rows dropped), and any degenerate `±inf` is sanitised to null before
+training.
+
+**TA is not new information.** Every TA feature is a deterministic *transformation of the
+same price stream* the v1/price layer already uses (it is explicitly de-duplicated against
+v1's RSI/MACD/ADX/Bollinger/OBV/z-scores). The honest prior is therefore *low* added alpha:
+a price-derived transform cannot inject information the price series does not already contain.
+The point of the experiment is to **measure**, not to hope.
+
+**The honest test:** price+macro (baseline) vs price+macro+TA (candidate) through the four
+identical gates — directional accuracy `> 0.52`, PBO `< 0.5`, excess **DSR** `> 0.5`, and
+positive mean excess-over-long. TA "wins" only if the candidate clears **all four**.
+
+| symbol | inputs | dir. acc | excess SR | excess **DSR** | **PBO** | VERDICT |
+|---|---|---|---|---|---|---|
+| MES | price+macro (72) | 0.4976 | −0.0371 | 0.00001 | 0.88 | no significant edge |
+| MES | **price+macro+TA (79)** | 0.4988 | −0.0360 | 0.000 | 0.47 | **no significant edge** |
+| MNQ | price+macro (72) | 0.5209 | −0.0142 | 0.014 | 0.52 | no significant edge |
+| MNQ | **price+macro+TA (79)** | 0.5218 | −0.0153 | 0.022 | 0.89 | **no significant edge** |
+
+**Result (run 2026-06-09, `ta_feature_version = v2`, 7 TA columns added): TA cleared
+no gates on either symbol; the verdict is unchanged — _no significant edge_.** The
+numbers barely move and excess-over-beta stays **negative** everywhere (the model
+still loses to buy-and-hold both with and without TA):
+
+* **MES — "TA worsened" (by the headline metric).** Directional accuracy +0.0012 and
+  excess Sharpe +0.001 (still negative); excess DSR stays ≈0 (1e-5 → 0). PBO *fell*
+  sharply (0.88 → 0.47) but a low PBO on a model with negative excess and zero DSR is
+  not an edge — the other three gates still fail.
+* **MNQ — "TA improved but did not clear gates".** Excess DSR ticked up (0.014 →
+  0.022) — still **≪ 0.5** — while PBO *worsened* (0.52 → 0.89) and excess Sharpe got
+  slightly more negative. No gate is cleared.
+* **The PBO swinging in opposite directions (MES down, MNQ up) is itself a tell:** the
+  7 TA columns are near-collinear transforms of the price the model already has, so
+  they destabilise config selection without adding information. This is exactly the
+  low-alpha, redundant-feature outcome the honest prior predicted.
+
+This is a **valid, expected result**, not a failure. TA is a transformation of the
+same price stream; it cannot inject information the price series does not already
+contain, and the gates correctly refuse to reward it. The productive levers remain
+genuinely new information (news / sentiment, deeper microstructure / order flow),
+each tested through this same unchanged harness. Per-symbol detail:
+`data/models/runs/<symbol>_ta_comparison.json`.
+
+Run the experiment:
+
+```bash
+# Build the TA lake first (local, no Databento), then the side-by-side verdict
+uv run python -m options_system.ta.build --symbols MES MNQ
+uv run python -m options_system.models.run --symbols MES MNQ --compare-ta
+```
+
 ## How to run / view it
 
 ```bash
 # Full pipeline per symbol: matrix → in-CV search → CPCV/PBO/DSR verdict → SHAP → MLflow
 uv run python -m options_system.models.run --symbols MES MNQ
+
+# Opt-in TA experiment: price+macro vs price+macro+TA through the identical gates
+uv run python -m options_system.models.run --symbols MES MNQ --compare-ta
 
 # Read-only model-health view (verdict, gate metrics, CPCV distribution, SHAP)
 uv run streamlit run src/options_system/observability/model_health.py

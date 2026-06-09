@@ -84,7 +84,8 @@ def log_run(
     mlflow.set_tracking_uri(tracking_uri())
     mlflow.set_experiment(experiment)
     macro_tag = "macro" if summary.get("with_macro") else "price"
-    run_name = f"{summary['symbol']}-{summary['model_version']}-{macro_tag}"
+    ta_tag = "-ta" if summary.get("with_ta") else ""
+    run_name = f"{summary['symbol']}-{summary['model_version']}-{macro_tag}{ta_tag}"
     with mlflow.start_run(run_name=run_name) as run:
         params: dict[str, Any] = {
             "symbol": summary["symbol"],
@@ -94,10 +95,13 @@ def log_run(
             "validation_version": summary["validation_version"],
             "macro_feature_version": summary.get("macro_feature_version"),
             "with_macro": summary.get("with_macro", False),
+            "ta_feature_version": summary.get("ta_feature_version"),
+            "with_ta": summary.get("with_ta", False),
             "timeout_handling": summary["timeout_handling"],
             "n_samples": summary["n_samples"],
             "n_features": summary["n_features"],
             "n_macro_features": summary.get("n_macro_features", 0),
+            "n_ta_features": summary.get("n_ta_features", 0),
             "n_trials": summary["n_trials"],
             "selection_metric": summary["selection_metric"],
         }

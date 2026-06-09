@@ -42,11 +42,23 @@ Run it:
 uv run python -m options_system.ta.build --symbols MES MNQ
 ```
 
-## Isolation
+## Isolation & model opt-in
 
 This layer is **purely additive**. It writes only to `data/ta_features/`, never
-touches the v1 `data/features/` or the microstructure `data/micro_bars/` lakes,
-and is not wired into the model training matrix yet (`models/dataset.py` is
-unchanged). Opt it into model training later by adding a `with_ta` flag there,
-mirroring how the macro layer plugs in. No labels/targets, models, or strategy
-live here — just deterministic, point-in-time-correct feature construction.
+touches the v1 `data/features/` or the microstructure `data/micro_bars/` lakes.
+
+As of Phase 10 it can be **opted into** model training via `with_ta` — but it is
+**off by default**, so the canonical price+macro model is unchanged unless TA is
+explicitly requested:
+
+```fish
+# Build the lake, then run the honest opt-in comparison through the same gates
+uv run python -m options_system.ta.build --symbols MES MNQ
+uv run python -m options_system.models.run --symbols MES MNQ --compare-ta
+```
+
+`load_training_matrix(..., with_ta=True)` appends the TA columns after price+macro
+(backward as-of at each label `t0`); `--with-ta` runs a single TA-enabled model and
+`--compare-ta` runs price+macro vs price+macro+TA side-by-side. See `docs/MODEL.md`
+("Phase 10 — opt-in TA v2 controlled experiment"). No labels/targets, strategy, or
+risk logic live here — just deterministic, point-in-time-correct feature construction.

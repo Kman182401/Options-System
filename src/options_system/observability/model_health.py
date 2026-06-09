@@ -23,7 +23,12 @@ from typing import Any
 
 from config.settings import Settings
 
-from ..models.evaluate_model import read_model_run
+from ..models.evaluate_model import _runs_dir, read_model_run
+
+
+def _ta_comparison_path(symbol: str, *, runs_dir: Path | None = None) -> Path:
+    """Path to the opt-in TA comparison JSON for ``symbol`` (may not exist)."""
+    return (runs_dir or _runs_dir()) / f"{symbol}_ta_comparison.json"
 
 
 def gather_model_health(
@@ -55,6 +60,12 @@ def gather_model_health(
             "cpcv": {},
             "shap_top_features": [],
             "mlflow_run_id": None,
+            # TA awareness (Phase 10): the canonical run is price+macro (with_ta=False);
+            # the opt-in TA experiment lives in <symbol>_ta_comparison.json.
+            "with_ta": False,
+            "ta_feature_version": None,
+            "n_ta_features": 0,
+            "has_ta_comparison": _ta_comparison_path(symbol, runs_dir=runs_dir).exists(),
         }
         run = read_model_run(symbol, runs_dir=runs_dir)
         if run is not None:
@@ -73,6 +84,9 @@ def gather_model_health(
                 cpcv=run.get("cpcv", {}),
                 shap_top_features=(run.get("shap") or {}).get("top_features", []),
                 mlflow_run_id=run.get("mlflow_run_id"),
+                with_ta=run.get("with_ta", False),
+                ta_feature_version=run.get("ta_feature_version"),
+                n_ta_features=run.get("n_ta_features", 0),
             )
         out.append(info)
     return out
