@@ -1,0 +1,59 @@
+# Technical-analysis feature layer (declarative, versioned) — feature_version "v2".
+#
+# Loaded by ta/config.py into a typed TaConfig. This is an ADDITIVE, ISOLATED
+# layer that sits ALONGSIDE the price feature_version=v1 layer (config/features.yaml)
+# — it deliberately does NOT duplicate v1's RSI/MACD/ADX/Bollinger/OBV/z-scores.
+# It adds a curated starter set of classic oscillators computed locally over the
+# SAME continuous 1-minute bars (no external TA service, no new dependency).
+#
+# Windows are in BARS (= minutes, since the base series is 1-minute). Everything
+# here is operationally tunable WITHOUT touching code. Bump `ta_feature_version`
+# whenever a change would alter emitted values, so stored tables stay self-describing.
+#
+# Leakage rule baked into every choice below: features are causal (trailing
+# windows only) and every emitted feature is degree-0 in price scale (price-ratio
+# or log-price-difference) so it is invariant to ratio back-adjustment. See
+# docs/TA_FEATURES.md (roll-safe column) and the truncation-invariance test
+# (tests/test_ta_leakage.py).
+
+ta_feature_version: "v2"
+
+# Stochastic oscillator: %K = position of close in the trailing high/low range;
+# %D = short SMA of %K. Bounded 0..100.
+stoch:
+  k_window: 14
+  d_smooth: 3
+
+# Commodity Channel Index: typical-price deviation from its SMA, scaled by the
+# mean absolute deviation (computed as the trailing mean of |tp - SMA(tp)|).
+cci:
+  window: 20
+
+# Money Flow Index: volume-weighted RSI on typical price. Bounded 0..100.
+mfi:
+  window: 14
+
+# Vortex indicator: trend strength via VI+ / VI- (directional movement over the
+# summed true range). Both non-negative.
+vortex:
+  window: 14
+
+# TRIX: 1-bar change of the triple-EWM of log(close) (≈ smoothed rate of change).
+trix:
+  window: 15
+
+# Days Databento flagged as reduced-quality during the Phase 1.5 backfill (same
+# set as config/features.yaml, since this layer reads the same bars_1m data). Any
+# feature row on these dates is marked degraded=true (carried, never dropped).
+degraded_days:
+  - 2020-02-27
+  - 2020-02-28
+  - 2020-06-30
+  - 2021-12-05
+  - 2022-01-02
+  - 2025-09-17
+  - 2025-09-24
+  - 2025-11-28
+  - 2026-03-15
+  - 2026-03-16
+  - 2026-04-10
