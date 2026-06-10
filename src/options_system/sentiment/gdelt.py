@@ -137,7 +137,18 @@ def fetch_artlist(
     url = build_query_url(
         topic=topic, start=start, end=end, max_records=max_records, language=language
     )
-    req = urllib.request.Request(url, headers={"User-Agent": "Options-System/research"})
+    # Send a standard JSON client's headers. GDELT rate-limits (HTTP 429) header-less
+    # requests far more aggressively than well-formed ones; an explicit Accept and an
+    # identity Accept-Encoding (urllib does not auto-decompress gzip) match a normal
+    # client and avoid a decode error on the response body.
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Options-System/research",
+            "Accept": "application/json",
+            "Accept-Encoding": "identity",
+        },
+    )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - https GDELT API
         payload = json.loads(resp.read().decode("utf-8"))
     return parse_artlist(

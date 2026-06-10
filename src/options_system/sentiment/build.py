@@ -13,6 +13,9 @@ Flags
 --score                            score parsed events with the deterministic FakeScorer
 --dry-run                          parse/plan only; never write, never network
 --fixture PATH                     parse this local fixture file (offline)
+--smoke                            bounded live-shape smoke fetch (hard per-source
+                                   record + window caps; requires --allow-network and a
+                                   free_no_auth source). --cik NNN for a sec_edgar smoke.
 
 Safety: the access decision is a pure function (:func:`decide_access`) that fails
 closed — paid/unknown sources are refused outright, and a network fetch is only
@@ -25,7 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 from options_system.common.external_data_policy import (
@@ -87,6 +90,47 @@ def decide_access(
 
 def _ingested_now() -> datetime:
     return datetime.now(UTC)
+
+
+# --- bounded live-shape smoke (Phase 16) ------------------------------------ #
+
+# Hard per-source record caps for --smoke. A live-shape smoke proves the adapter still
+# matches the real source; it is NOT ingestion, so the caps are tiny and non-tunable.
+_SMOKE_MAX_RECORDS = {"gdelt": 5, "sec_edgar": 2}
+_SMOKE_MAX_WINDOW_DAYS = 2
+
+
+class SmokeBoundsError(ValueError):
+    """A --smoke request exceeded the hard live-shape smoke caps."""
+
+
+def enforce_smoke_bounds(source: str, *, max_records: int | None, start: date, end: date) -> int:
+    """Validate a smoke request against the hard caps; return the effective max_records.
+
+    Rejects (raises :class:`SmokeBoundsError`) a source without a smoke cap (i.e. not a
+    free/no-auth sentiment source), a ``max_records`` above the per-source cap, or a
+    window wider than :data:`_SMOKE_MAX_WINDOW_DAYS`. ``max_records=None`` defaults to
+    the cap. Pure — no network, used by both the CLI and the tests.
+    """
+    src = source.strip().lower()
+    cap = _SMOKE_MAX_RECORDS.get(src)
+    if cap is None:
+        raise SmokeBoundsError(
+            f"--smoke supports only {sorted(_SMOKE_MAX_RECORDS)}; got source {source!r}."
+        )
+    eff = cap if max_records is None else max_records
+    if eff < 1:
+        raise SmokeBoundsError(f"--smoke {src}: max_records must be >= 1, got {eff}.")
+    if eff > cap:
+        raise SmokeBoundsError(f"--smoke {src}: max_records {eff} exceeds the hard cap {cap}.")
+    span = (end - start).days
+    if span < 0:
+        raise SmokeBoundsError(f"--smoke: end {end} precedes start {start}.")
+    if span > _SMOKE_MAX_WINDOW_DAYS:
+        raise SmokeBoundsError(
+            f"--smoke: window {start}..{end} spans {span} days; cap is {_SMOKE_MAX_WINDOW_DAYS}."
+        )
+    return eff
 
 
 def parse_fixture(
@@ -154,6 +198,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--score", action="store_true", help="score events with the FakeScorer")
     p.add_argument("--dry-run", action="store_true", help="parse/plan only; never write/network")
     p.add_argument("--fixture", default=None, help="parse this local fixture file (offline)")
+    p.add_argument(
+        "--smoke",
+        action="store_true",
+        help="bounded live-shape smoke fetch (hard-capped; requires --allow-network)",
+    )
+    p.add_argument("--cik", default=None, help="single CIK for a --smoke sec_edgar fetch")
     return p
 
 
@@ -164,6 +214,9 @@ def run(args: argparse.Namespace) -> int:
     end = date.fromisoformat(args.end) if args.end else cfg.windows.end
     max_records = args.max_records if args.max_records is not None else cfg.fetch_limits.max_records
     sfv = cfg.sentiment_feature_version
+
+    if args.smoke:
+        return _run_smoke(args, cfg, topic=topic, sfv=sfv)
 
     try:
         plan = decide_access(
@@ -256,6 +309,110 @@ def _finish(
     else:
         print("  dry run — not written.")
     return 0
+
+
+def _smoke_window(args: argparse.Namespace) -> tuple[date, date]:
+    """Bounded smoke window: explicit --start/--end, else the most recent 1 day."""
+    if args.start and args.end:
+        return date.fromisoformat(args.start), date.fromisoformat(args.end)
+    end = _ingested_now().date()
+    return end - timedelta(days=1), end
+
+
+def _run_smoke(args: argparse.Namespace, cfg: SentimentConfig, *, topic: str, sfv: str) -> int:
+    """Bounded live-shape smoke fetch. Fail-closed: needs --allow-network + a free source,
+    enforces the hard per-source record + window caps, and writes only the tiny result."""
+    src = args.source.strip().lower()
+    # A smoke IS a real network fetch — refuse unless network is explicitly allowed.
+    if not args.allow_network:
+        print("BLOCKED: --smoke is a live fetch; pass --allow-network explicitly.")
+        print("  network_used=false")
+        return 2
+    try:
+        assert_source_usable(src)  # refuse paid/unknown outright
+        assert_network_allowed(src, allow_network=True)  # free_no_auth + opt-in only
+    except Exception as exc:  # noqa: BLE001 - surface the refusal cleanly
+        print(f"BLOCKED: {exc}")
+        print("  network_used=false")
+        return 2
+
+    start, end = _smoke_window(args)
+    try:
+        max_records = enforce_smoke_bounds(src, max_records=args.max_records, start=start, end=end)
+    except SmokeBoundsError as exc:
+        print(f"BLOCKED: {exc}")
+        print("  network_used=false")
+        return 2
+
+    print(
+        f"[sentiment.smoke] source={src} topic={topic!r} window={start}..{end} "
+        f"max_records={max_records} sfv={sfv}"
+    )
+    lo = datetime.combine(start, time(0), UTC)
+    hi = datetime.combine(end, time(0), UTC)
+    ingested = _ingested_now()
+
+    # SEC EDGAR requires a real, compliant User-Agent. If it is the placeholder, do NOT
+    # touch the network — skip cleanly (a documented, non-failing outcome for Phase 16).
+    if src == "sec_edgar":
+        ua = cfg.fetch_limits.sec_user_agent
+        if (not ua) or ("set-in-env" in ua):
+            print("SEC smoke skipped: compliant User-Agent not configured (placeholder UA).")
+            print("  network_used=false")
+            return 0
+        if args.dry_run:
+            print(f"  would fetch (NOT executed): {sec_edgar.build_submissions_url(args.cik or 0)}")
+            print("  dry run — no network. network_used=false")
+            return 0
+        if not args.cik:
+            print("BLOCKED: SEC smoke needs --cik (a single CIK).")
+            print("  network_used=false")
+            return 2
+        try:
+            events = sec_edgar.fetch_submissions(
+                args.cik,
+                topic=topic,
+                sentiment_feature_version=sfv,
+                ingested_at=ingested,
+                user_agent=ua,
+                allow_network=True,
+            )[:max_records]
+        except Exception as exc:  # noqa: BLE001 - report the live failure, do not crash
+            print("  network_used=true")
+            print(f"SMOKE FETCH FAILED ({type(exc).__name__}): {exc}")
+            return 1
+        print("  network_used=true")
+        return _finish(events, args, cfg, write=not args.dry_run)
+
+    # GDELT
+    if args.dry_run:
+        url = gdelt.build_query_url(
+            topic=topic,
+            start=lo,
+            end=hi,
+            max_records=max_records,
+            language=cfg.fetch_limits.default_language,
+        )
+        print(f"  would fetch (NOT executed): {url}")
+        print("  dry run — no network. network_used=false")
+        return 0
+    try:
+        events = gdelt.fetch_artlist(
+            topic=topic,
+            start=lo,
+            end=hi,
+            max_records=max_records,
+            sentiment_feature_version=sfv,
+            ingested_at=ingested,
+            allow_network=True,
+            language=cfg.fetch_limits.default_language,
+        )[:max_records]
+    except Exception as exc:  # noqa: BLE001 - report the live failure, do not crash
+        print("  network_used=true")
+        print(f"SMOKE FETCH FAILED ({type(exc).__name__}): {exc}")
+        return 1
+    print("  network_used=true")
+    return _finish(events, args, cfg, write=not args.dry_run)
 
 
 def main(argv: list[str] | None = None) -> int:

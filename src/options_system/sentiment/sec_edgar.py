@@ -127,7 +127,14 @@ def fetch_submissions(
             "Set fetch_limits.sec_user_agent before any real fetch."
         )
     url = build_submissions_url(cik)
-    req = urllib.request.Request(url, headers={"User-Agent": user_agent})
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": user_agent,
+            "Accept": "application/json",
+            "Accept-Encoding": "identity",
+        },
+    )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - https SEC API
         payload = json.loads(resp.read().decode("utf-8"))
     return parse_submissions(

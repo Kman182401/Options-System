@@ -89,3 +89,8 @@ explicit `--allow-network`. Databento keeps its own, stricter env-gated guard on
 `OPTIONS_DATABENTO_SPEND_OK`, do not unfreeze the card, and do not run any paid pull
 without it. Most learning-loop work (training, validation, this sentiment scaffold)
 needs **no** new ingest at all.
+
+**Phase 16 note (2026-06-09):** the bounded sentiment live-shape smoke used only the
+free/no-auth GDELT source (no key, no card; GDELT rate-limited the shared egress IP, so
+nothing was billed and no data was persisted) and **did not touch Databento**. SEC
+EDGAR was skipped (no compliant User-Agent configured). No paid source was contacted.

@@ -1,0 +1,24 @@
+{
+  "articles": [
+    {
+      "url": "https://www.reuters.com/markets/us/fed-holds-rates-2026-06-09/",
+      "url_mobile": "",
+      "title": "Fed holds rates steady, signals patience on cuts",
+      "seendate": "20260609T131500Z",
+      "socialimage": "https://www.reuters.com/resizer/abc.jpg",
+      "domain": "reuters.com",
+      "language": "English",
+      "sourcecountry": "United States"
+    },
+    {
+      "url": "https://www.bloomberg.com/news/fed-inflation-2026-06-09",
+      "url_mobile": "https://m.bloomberg.com/news/fed-inflation",
+      "title": "Inflation data keeps Fed cautious ahead of summer",
+      "seendate": "20260609T094500Z",
+      "socialimage": "",
+      "domain": "bloomberg.com",
+      "language": "English",
+      "sourcecountry": "United States"
+    }
+  ]
+}

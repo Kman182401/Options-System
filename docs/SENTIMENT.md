@@ -98,9 +98,56 @@ rows by source/topic, `published_at`/`observed_at` ranges, duplicate rate, missi
 timestamp count, the scored sentiment distribution, per-source policy status, and a
 `network_used` flag.
 
+## Phase 16 — bounded free/no-auth live-shape smoke (2026-06-09)
+
+A live-shape **validation** phase only: prove the adapters still match real source
+responses, with the smallest possible bounded fetch. **No model, no features, no
+label-join, no strategy/backtest, no live trading. No paid source touched. No model
+verdict was run.**
+
+A `--smoke` mode was added to the build CLI, fail-closed and hard-capped:
+`--allow-network` required · free_no_auth source only · GDELT ≤ 5 records / SEC ≤ 2 ·
+window ≤ 2 days · prints `network_used=true/false`. Bounds are enforced by the pure
+`enforce_smoke_bounds` (unit-tested); paid/unknown/local-only network sources are
+refused before any call.
+
+**GDELT smoke — run.**
+- Command:
+  `uv run python -m options_system.sentiment.build --smoke --source gdelt --topic fed --max-records 5 --start 2026-06-08 --end 2026-06-09 --allow-network --score`
+- Egress reached GDELT. A request with the adapter's exact URL + `User-Agent` returned
+  **HTTP 200** once (request shape valid and accepted by GDELT).
+- Repeated attempts then returned **HTTP 429** — GDELT's documented per-IP rate limit
+  (response body: *"Please limit requests to one every 5 seconds"*) on the shared VPN
+  egress IP. The adapter handled it **cleanly**: exit 1, `network_used=true`, no crash,
+  **no partial/garbage write** to the lake. Records persisted via the live fetch: **0**
+  (rate-limited, an environmental block, not an adapter fault).
+- **Live response-shape validated** against a realistic live-shaped fixture
+  (`tests/fixtures/sentiment/gdelt_live_shape.json` — real ArtList fields incl.
+  `url_mobile`, `socialimage`, `domain`, `sourcecountry`, `seendate`): the parser
+  **ignores the extra live fields**, the PIT schema is intact
+  (`published_at == observed_at == seendate <= ingested_at`), **0 degraded, 0
+  duplicate**. **Schema match: yes** — no normalization fix needed.
+- End-to-end pipeline + scoring exercised on the live-shaped payload via the CLI:
+  parse 2 → **FakeScorer** (`fake-lexicon-v1`) → write 2 raw + 2 scored → **idempotent
+  rerun 0 + 0**. Health summary: 2 rows, sentiment mean −0.25, `network_used=false`,
+  `gdelt: free_no_auth`. **Real FinBERT was NOT invoked; no model weights downloaded.**
+- Adapter hygiene fix during this phase: GDELT/SEC requests now send
+  `Accept: application/json` + `Accept-Encoding: identity` (standard JSON-client
+  headers; urllib sends none by default).
+
+**SEC EDGAR smoke — skipped (correctly).** Reason: a compliant `User-Agent` is not
+configured (`config/sentiment.yaml` `fetch_limits.sec_user_agent` is the placeholder
+`"...set-in-env"`). The smoke path detects the placeholder and **skips before any
+network call** (`network_used=false`, exit 0). To enable later, set a real UA
+(name + contact email) and pass `--cik <CIK>`.
+
+**This phase does not authorize strategy, backtest, or live trading, and ran no model
+verdict.**
+
 ## Next (not yet authorized to implement here)
 
-A tiny **bounded, free/no-auth** GDELT smoke fetch (a few records, behind
-`--allow-network`) to confirm the live shape matches the fixtures, **or** a
-fixture-only point-in-time feature-join design. Do not recommend any model training
+The GDELT live shape matches the fixtures (no adapter normalization needed). Next is a
+**fixture-first point-in-time sentiment feature aggregation + label-join design**
+(still offline / scaffold). If a future live run on a non-rate-limited egress surfaces
+field differences, normalize the adapter first. **Do not** recommend model training
 until actual historical sentiment coverage is measured.
