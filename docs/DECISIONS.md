@@ -653,3 +653,73 @@ that is the next prompt. See `docs/MICRO_LABELING.md`.
   leaves this session byte-identical), σ causality, determinism + price-scale
   invariance. Full `pytest` green, ruff/format/ty clean, QA logged to MLflow
   (`micro-labels`). New deps: **none**.
+
+## Phase 18 — Bounded GDELT historical backfill design (2026-06-09)
+
+**Goal:** measure whether enough free, point-in-time-correct sentiment history exists
+to justify a Phase 19 model verdict — coverage measurement only, against gates
+pre-registered before any data arrived (see `docs/SENTIMENT.md`). No model, no
+strategy, no paid data (`OPTIONS_DATABENTO_SPEND_OK` stayed unset throughout).
+
+### Backfill orchestrator (`sentiment/backfill.py`) — key decisions
+- **One UTC calendar day per topic per slice**, from a pure, deterministic slicer.
+  GDELT ArtList returns ≤250 records with **no pagination**, so a slice returning
+  exactly 250 is *truncated*: it is **bisected** and both halves re-fetched,
+  recursively, until halves would drop below **1 hour**; a floor slice still
+  returning 250 is recorded `truncated: true` and left incomplete (disclosed, not
+  hidden). Truncation barely affects coverage (has_any needs one event), only depth.
+- **Archive honesty.** GDELT officially supports only ~the last 3 months
+  (`ARCHIVE_SUPPORTED_DAYS = 92`). Every slice is classified
+  `supported`/`unsupported_archive` at plan time; both are attempted, but the
+  **supported region runs first** so a request-capped run spends its budget where
+  the pre-registered gates are evaluated, and coverage is reported per region.
+- **Pacing/backoff as protocol facts, not tunables**: ≥5 s + 0–1 s jitter between
+  requests (GDELT enforces ~1 req/5 s per IP); on HTTP 429 exponential backoff
+  10 s → doubling, capped 120 s, honoring `Retry-After`, ≤5 attempts per slice, then
+  `failed: rate_limited` and the run continues. Clock/sleep/RNG/fetcher injectable —
+  every test runs offline with zero real sleeps.
+- **Resumable JSON manifest** under `data/sentiment_backfill/` (gitignored, atomic
+  writes): per-slice window, HTTP status, records returned/written, truncated/
+  bisected/failed flags, timestamps, plus per-run counters. On `--resume`, completed
+  slices are skipped, failed slices retried, and pending bisection children
+  re-derived — an interrupt loses nothing. The manifest is the audit trail the
+  coverage report cites.
+- **Fail-closed hard caps** in `config/sentiment.yaml` (`backfill.max_requests: 2500`,
+  `backfill.max_wall_clock_minutes: 240`); hitting either stops cleanly (exit 3)
+  with the checkpoint intact. `--plan` prints the full request plan with zero
+  network; `--probe` runs exactly one slice as a live canary. All real fetches
+  require `--allow-network` and route through the existing fail-closed
+  `external_data_policy` (free_no_auth only). **No second GDELT client** — the
+  existing `gdelt.py` builder/parser/lake are reused.
+- **Topic label ≠ query text.** Several stable topic labels (`ai_capex`,
+  `megacap_tech`, `risk_off`) are not usable as literal GDELT search tokens, so
+  `backfill.topic_queries` maps each label to the query text actually sent (keys
+  validated ⊆ `query_topics`; the s1 `query_topic` event attribute remains the
+  label). Disclosed in `docs/SENTIMENT.md`.
+- **Topic attribution undercount (disclosed, unchanged).** `content_hash` excludes
+  `query_topic`, so an article matched by several topic queries persists once with
+  first-write-wins attribution — by-topic breakdowns undercount multi-topic
+  articles. The schema was deliberately NOT changed (s1 stability).
+
+### FinBERT provisioning + batch scoring
+- `scripts/download_finbert.py` is the **single deliberate download path** (prints
+  model/destination/size, then resolves the snapshot revision hash). The scorer
+  keeps `local_files_only=True` and fails with instructions — scoring can never
+  trigger a download. `FinbertScorer.score_batch` adds batched
+  `torch.inference_mode()` scoring (titles ≪ 512 tokens), and the resolved revision
+  hash is stamped as `model_version_or_hash` so a future re-score with different
+  weights is distinguishable. `sentiment/score_backfill.py` scores unscored raw
+  rows idempotently on `(content_hash, model_name)` in deterministic order.
+
+### Coverage split
+- `sentiment/coverage.py` gained `--archive-cutoff`: the report splits per-label
+  coverage into `supported` vs `unsupported_archive` regions so the 3-month archive
+  limit's effect is visible instead of silently pooled. Tested on fixtures.
+
+### Verification
+- 28 new offline tests (slicer determinism/UTC boundaries, bisection floor, backoff
+  sequence + retry cap with injected clock, checkpoint resume incl. re-derived
+  bisection children, hard caps, archive classification, plan-mode zero-network
+  guarantee, scoring idempotency, coverage split). Full `pytest` green (397),
+  ruff format/check + ty clean, zero `# type: ignore`. New deps: **none**
+  (`huggingface_hub` was already a transformers dependency).

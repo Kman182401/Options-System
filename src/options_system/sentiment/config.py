@@ -66,6 +66,29 @@ class FetchLimits(_Base):
     sec_user_agent: str
 
 
+class Backfill(_Base):
+    """Bounded GDELT historical backfill caps + query text (Phase 18).
+
+    Both caps are fail-closed: hitting either stops the run cleanly with the
+    checkpoint manifest intact. ``topic_queries`` maps a stable topic LABEL (the
+    s1 ``query_topic`` stamped on events) to the GDELT query TEXT actually sent;
+    a topic without an entry queries its own label text. Keys are validated
+    against ``query_topics`` so a typo can never invent a new topic label.
+    """
+
+    max_requests: int = Field(gt=0)
+    max_wall_clock_minutes: int = Field(gt=0)
+    topic_queries: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("topic_queries")
+    @classmethod
+    def _queries_nonempty(cls, v: dict[str, str]) -> dict[str, str]:
+        for topic, query in v.items():
+            if not query.strip():
+                raise ValueError(f"backfill.topic_queries[{topic!r}] is empty")
+        return v
+
+
 # The nine aggregate fields the layer knows how to compute (the authoritative set;
 # config may select a subset/order but never invent a name). Mirrors features.py.
 _KNOWN_AGG_FIELDS = frozenset(
@@ -148,6 +171,7 @@ class SentimentConfig(_Base):
     scoring: Scoring
     storage: Storage
     fetch_limits: FetchLimits
+    backfill: Backfill
     aggregation: Aggregation
 
     @field_validator("default_sources", "query_topics")
@@ -177,6 +201,19 @@ class SentimentConfig(_Base):
                 raise ValueError(
                     f"default_sources lists {src!r} with blocked policy {pol.value!r}."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _backfill_topics_are_known(self) -> SentimentConfig:
+        """backfill.topic_queries keys must be declared query_topics — the query text
+        is a fetch detail, but the topic LABEL is a stable s1 event attribute and can
+        only ever come from the vetted list."""
+        unknown = sorted(set(self.backfill.topic_queries) - set(self.query_topics))
+        if unknown:
+            raise ValueError(
+                f"backfill.topic_queries has unknown topic label(s) {unknown}; "
+                f"declared query_topics: {list(self.query_topics)}"
+            )
         return self
 
     @model_validator(mode="after")

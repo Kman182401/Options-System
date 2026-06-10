@@ -132,9 +132,18 @@ class FinbertScorer:
     network and never calls a hosted inference endpoint.
     """
 
-    def __init__(self, model_name: str = "ProsusAI/finbert", device: str | None = None) -> None:
+    def __init__(
+        self,
+        model_name: str = "ProsusAI/finbert",
+        device: str | None = None,
+        version_hash: str | None = None,
+    ) -> None:
         self.name = model_name
         self.device = device
+        # The resolved local snapshot revision (git commit hash) when known — stamped
+        # as model_version_or_hash on every score so a re-score with different weights
+        # is distinguishable. Falls back to the model path when not provided.
+        self.version_hash = version_hash
         self._pipeline: bool | None = None
         self._id2label: dict[int, str] | None = None
         # Heavy objects, populated lazily by _ensure_loaded (kept Any to avoid
@@ -190,15 +199,7 @@ class FinbertScorer:
         self._id2label = {int(k): v.lower() for k, v in cfg.id2label.items()}
         self._pipeline = True  # sentinel: loaded
 
-    def score_text(self, text: str) -> SentimentScore:
-        self._ensure_loaded()
-        torch = self._torch
-        with torch.no_grad():
-            inputs = self._tok(text, return_tensors="pt", truncation=True, max_length=512)
-            if self.device:
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            logits = self._model(**inputs).logits[0]
-            probs = torch.softmax(logits, dim=-1).tolist()
+    def _score_from_probs(self, probs: list[float], scored_at: datetime) -> SentimentScore:
         assert self._id2label is not None
         by_label = {self._id2label[i]: float(probs[i]) for i in range(len(probs))}
         p = by_label.get("positive", 0.0)
@@ -210,6 +211,37 @@ class FinbertScorer:
             neutral_score=neu,
             sentiment_score=p - n,
             model_name=self.name,
-            model_version_or_hash=getattr(self._model.config, "_name_or_path", None),
-            scored_at=_now(),
+            model_version_or_hash=(
+                self.version_hash or getattr(self._model.config, "_name_or_path", None)
+            ),
+            scored_at=scored_at,
         )
+
+    def score_text(self, text: str) -> SentimentScore:
+        return self.score_batch([text])[0]
+
+    def score_batch(self, texts: list[str], *, batch_size: int = 64) -> list[SentimentScore]:
+        """Score many texts in fixed-size batches (deterministic output order).
+
+        Inference only: ``model.eval()`` was set at load; ``torch.inference_mode()``
+        disables autograd; padding/truncation keep every (short) title well under
+        FinBERT's 512-token limit. Runs on ``self.device`` when set (e.g. ``cuda``).
+        """
+        if not texts:
+            return []
+        self._ensure_loaded()
+        torch = self._torch
+        scored_at = _now()
+        out: list[SentimentScore] = []
+        with torch.inference_mode():
+            for i in range(0, len(texts), batch_size):
+                chunk = texts[i : i + batch_size]
+                inputs = self._tok(
+                    chunk, return_tensors="pt", truncation=True, max_length=512, padding=True
+                )
+                if self.device:
+                    inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                logits = self._model(**inputs).logits
+                probs = torch.softmax(logits, dim=-1).cpu().tolist()
+                out.extend(self._score_from_probs(p, scored_at) for p in probs)
+        return out

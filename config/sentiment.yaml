@@ -62,6 +62,26 @@ fetch_limits:
   default_language: "eng"     # GDELT language code; null = any
   sec_user_agent: "Options-System research (contact: set-in-env)"  # SEC requires a UA
 
+# Bounded GDELT historical backfill (Phase 18). Fail-closed hard caps: hitting either
+# cap stops the run cleanly with the checkpoint manifest intact. topic_queries maps a
+# stable topic LABEL (the s1 query_topic stamped on events) to the GDELT query TEXT
+# actually sent — several topic labels (ai_capex, megacap_tech, risk_off) are not
+# usable as literal GDELT search tokens. Keys must be a subset of query_topics; a
+# topic without an entry queries its own label text.
+backfill:
+  max_requests: 2500            # total GDELT requests per run (incl. retries + bisection)
+  max_wall_clock_minutes: 240   # per-run wall-clock cap
+  topic_queries:
+    fed: '"federal reserve"'
+    inflation: 'inflation'
+    rates: '"interest rates"'
+    recession: 'recession'
+    earnings: '"quarterly earnings"'
+    ai_capex: '("AI capex" OR "AI infrastructure" OR "data center spending")'
+    semiconductors: 'semiconductors'
+    megacap_tech: '("big tech" OR "megacap" OR "mega-cap stocks")'
+    risk_off: '("risk-off" OR "safe haven" OR "flight to safety")'
+
 # Point-in-time sentiment feature AGGREGATION (Phase 17 — fixture/offline scaffold).
 #
 # This is a SEPARATE version axis from sentiment_feature_version above. That top-level

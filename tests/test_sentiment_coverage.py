@@ -109,3 +109,60 @@ def test_output_json_written_only_without_no_write(tmp_path):
         ["--fixture", SCORED, "--label-fixture", MICRO, "--no-write", "--output-json", str(skipped)]
     )
     assert not skipped.exists()
+
+
+# --- Phase 18: archive-region split ------------------------------------------ #
+
+
+def test_archive_region_split_supported_vs_unsupported():
+    from datetime import UTC, datetime
+
+    scored = _scored_from_fixture(SCORED)
+    labels = _labels_from_fixture(MICRO)
+    cutoff = datetime(2026, 2, 1, tzinfo=UTC)
+    rep = build_coverage_report(labels, scored, CFG, label_type="micro", archive_cutoff=cutoff)
+    assert rep["archive_cutoff"] == "2026-02-01T00:00:00+00:00"
+    sup = rep["by_archive_region"]["supported"]
+    unsup = rep["by_archive_region"]["unsupported_archive"]
+    # 2026-02-03 label (has prior sentiment) is at/after the cutoff; 2026-01-01 is before
+    assert sup["label_rows"] == 1 and sup["rows_with_any_sentiment"] == 1
+    assert abs(sup["coverage_rate"] - 1.0) < 1e-9
+    assert unsup["label_rows"] == 1 and unsup["rows_with_any_sentiment"] == 0
+    assert abs(unsup["coverage_rate"] - 0.0) < 1e-9
+    # regions partition the pooled numbers
+    assert sup["label_rows"] + unsup["label_rows"] == rep["label_rows"]
+    assert (
+        sup["rows_with_any_sentiment"] + unsup["rows_with_any_sentiment"]
+        == rep["rows_with_any_sentiment"]
+    )
+    for window, rate in sup["coverage_by_window_rate"].items():
+        assert 0.0 <= rate <= 1.0
+        assert sup["coverage_by_window"][window] in (0, 1)
+
+
+def test_archive_region_split_absent_without_cutoff():
+    scored = _scored_from_fixture(SCORED)
+    labels = _labels_from_fixture(MICRO)
+    rep = build_coverage_report(labels, scored, CFG, label_type="micro")
+    assert rep["archive_cutoff"] is None
+    assert rep["by_archive_region"] is None
+
+
+def test_cli_archive_cutoff_flag(capsys):
+    rc = main(
+        [
+            "--label-type",
+            "micro",
+            "--fixture",
+            SCORED,
+            "--label-fixture",
+            MICRO,
+            "--no-write",
+            "--archive-cutoff",
+            "2026-02-01",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "region=supported" in out
+    assert "region=unsupported_archive" in out

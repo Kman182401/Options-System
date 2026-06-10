@@ -131,14 +131,44 @@ def _load_labels(args: argparse.Namespace, cfg: SentimentConfig) -> pl.DataFrame
 # --- report ------------------------------------------------------------------ #
 
 
+def _region_block(attached_sub: pl.DataFrame, cfg: SentimentConfig) -> dict[str, Any]:
+    """Coverage numbers for one archive region of an already-attached frame (pure)."""
+    agg = cfg.aggregation
+    rows = attached_sub.height
+    wname, _ = max(agg.windows.items(), key=lambda kv: kv[1])
+
+    def _cnt(w: str) -> int:
+        col = f"sent_{w}_count"
+        return (
+            int(attached_sub.filter(pl.col(col) > 0).height) if col in attached_sub.columns else 0
+        )
+
+    by_window = {w: _cnt(w) for w in agg.windows}
+    rows_with_any = by_window.get(wname, 0)
+    return {
+        "label_rows": rows,
+        "rows_with_any_sentiment": rows_with_any,
+        "coverage_rate": (rows_with_any / rows) if rows else 0.0,
+        "coverage_by_window": by_window,
+        "coverage_by_window_rate": {w: ((c / rows) if rows else 0.0) for w, c in by_window.items()},
+    }
+
+
 def build_coverage_report(
     labels: pl.DataFrame,
     scored_events: pl.DataFrame,
     cfg: SentimentConfig,
     *,
     label_type: str,
+    archive_cutoff: datetime | None = None,
 ) -> dict[str, Any]:
-    """Attach features and summarize coverage (pure; no I/O, no network)."""
+    """Attach features and summarize coverage (pure; no I/O, no network).
+
+    ``archive_cutoff`` (Phase 18) splits the per-label coverage into ``supported``
+    (label ``t0`` at/after the cutoff — inside GDELT's ~3-month reliable archive at
+    backfill time) vs ``unsupported_archive`` (older), so the archive limit's effect
+    on coverage is visible instead of silently pooled.
+    """
     time_col = "t0"
     scored_norm = normalize_scored_events(scored_events)
 
@@ -173,6 +203,20 @@ def build_coverage_report(
     attach = attach_to_micro_labels if label_type == "micro" else attach_to_daily_labels
     attached, cov = attach(labels, scored_events, cfg)
 
+    by_region: dict[str, Any] | None = None
+    cutoff_iso: str | None = None
+    if archive_cutoff is not None:
+        cut = (
+            archive_cutoff.astimezone(UTC)
+            if archive_cutoff.tzinfo
+            else archive_cutoff.replace(tzinfo=UTC)
+        )
+        cutoff_iso = cut.isoformat()
+        by_region = {
+            "supported": _region_block(attached.filter(pl.col(time_col) >= cut), cfg),
+            "unsupported_archive": _region_block(attached.filter(pl.col(time_col) < cut), cfg),
+        }
+
     wname, _ = max(cfg.aggregation.windows.items(), key=lambda kv: kv[1])
 
     def _rows_with(col: str) -> int:
@@ -206,6 +250,8 @@ def build_coverage_report(
         "observed_at": cov["observed_at"],
         "label_time": cov["label_time"],
         "feature_version": cov["feature_version"],
+        "archive_cutoff": cutoff_iso,
+        "by_archive_region": by_region,
     }
 
 
@@ -237,6 +283,15 @@ def _print_report(report: dict[str, Any]) -> None:
         f"  null_feature_count={report['null_feature_count']} "
         f"feature_columns_stable={report['feature_columns_stable']}"
     )
+    if report.get("by_archive_region"):
+        print(f"  archive_cutoff={report['archive_cutoff']}")
+        for region, block in report["by_archive_region"].items():
+            rates = {w: f"{r * 100:.1f}%" for w, r in block["coverage_by_window_rate"].items()}
+            print(
+                f"  region={region}: label_rows={block['label_rows']} "
+                f"rows_with_any={block['rows_with_any_sentiment']} "
+                f"coverage_rate={block['coverage_rate'] * 100:.1f}% by_window_rate={rates}"
+            )
     if report["label_rows"] == 0 or report["sentiment_rows"] == 0:
         print("  NOTE: no coverage to measure (0% coverage) — no sentiment/labels on disk yet.")
 
@@ -253,6 +308,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--label-fixture", default=None, help="label rows fixture (offline)")
     p.add_argument("--no-write", action="store_true", help="never write any output file")
     p.add_argument("--output-json", default=None, help="also write the report JSON here")
+    p.add_argument(
+        "--archive-cutoff",
+        default=None,
+        help="YYYY-MM-DD (UTC): split coverage into supported vs unsupported_archive "
+        "label regions (GDELT's ~3-month archive limit at backfill time)",
+    )
     return p
 
 
@@ -260,7 +321,14 @@ def run(args: argparse.Namespace) -> int:
     cfg = SentimentConfig.load()
     scored = _load_scored(args)
     labels = _load_labels(args, cfg)
-    report = build_coverage_report(labels, scored, cfg, label_type=args.label_type)
+    cutoff = (
+        datetime.fromisoformat(args.archive_cutoff).replace(tzinfo=UTC)
+        if args.archive_cutoff
+        else None
+    )
+    report = build_coverage_report(
+        labels, scored, cfg, label_type=args.label_type, archive_cutoff=cutoff
+    )
     _print_report(report)
     if args.output_json and not args.no_write:
         Path(args.output_json).write_text(

@@ -34,13 +34,16 @@ def build_query_url(
     end: datetime,
     max_records: int,
     language: str | None = None,
+    query_text: str | None = None,
 ) -> str:
     """Construct a bounded GDELT DOC 2.0 ArtList request URL (no network performed).
 
     ``max_records`` is hard-capped at GDELT's 250 ceiling. ``language`` (a GDELT lang
-    code like ``eng``) is appended to the query when given.
+    code like ``eng``) is appended to the query when given. ``query_text`` overrides
+    the search text actually sent (some stable topic LABELS, e.g. ``ai_capex``, are
+    not usable as literal GDELT tokens); when None the topic label itself is queried.
     """
-    query = topic.strip()
+    query = (query_text or topic).strip()
     if language:
         query = f"{query} sourcelang:{language}"
     params = {
@@ -127,15 +130,22 @@ def fetch_artlist(
     allow_network: bool,
     language: str | None = None,
     timeout: float = 30.0,
+    query_text: str | None = None,
 ) -> list[RawNewsEvent]:
     """Bounded real fetch — GATED. Refuses unless ``allow_network`` is explicitly True.
 
     Not exercised in the scaffold phase or in tests. Kept so the network path exists
-    and is provably behind the policy gate.
+    and is provably behind the policy gate. ``query_text`` overrides the search text
+    sent to GDELT; the ``topic`` label is what gets stamped on the parsed events.
     """
     assert_network_allowed(SOURCE, allow_network=allow_network)  # fail-closed
     url = build_query_url(
-        topic=topic, start=start, end=end, max_records=max_records, language=language
+        topic=topic,
+        start=start,
+        end=end,
+        max_records=max_records,
+        language=language,
+        query_text=query_text,
     )
     # Send a standard JSON client's headers. GDELT rate-limits (HTTP 429) header-less
     # requests far more aggressively than well-formed ones; an explicit Accept and an
