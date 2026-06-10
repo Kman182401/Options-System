@@ -20,10 +20,12 @@ Design (all fixed before any data was fetched — see docs/SENTIMENT.md Phase 18
   plan time; both are attempted, but coverage is reported per region and the
   unsupported region is never presented as guaranteed-complete. The supported region
   runs FIRST so the request budget is spent where the coverage gates are evaluated.
-* **Truncation + bisection** — ArtList returns at most 250 records with no
-  pagination. A slice returning exactly 250 is truncated: it is bisected and both
-  halves re-fetched, recursively, until halves would drop below 1 hour; a floor
-  slice still returning 250 is recorded ``truncated: true`` and not bisected.
+* **Truncation + bisection (breadth-first)** — ArtList returns at most 250 records
+  with no pagination. A slice returning exactly 250 is truncated: it is bisected
+  and both halves re-fetched, recursively, until halves would drop below 1 hour; a
+  floor slice still returning 250 is recorded ``truncated: true`` and not bisected.
+  Children are queued AFTER all base slices (breadth-first), so a capped run buys
+  gate-relevant day coverage before drilling busy days for depth.
 * **Pacing/backoff** — >= 5 s + jitter between requests (GDELT enforces ~1 req/5 s
   per IP). On HTTP 429: exponential backoff 10 s doubling, capped 120 s, honoring
   ``Retry-After``, bounded retries per slice, then the slice is recorded
@@ -238,7 +240,8 @@ def pending_slices(plan: Sequence[PlanSlice], manifest: Manifest) -> list[PlanSl
 
     Completed slices are skipped; failed slices are retried; for completed slices
     recorded ``bisected``, the two children are re-derived and checked recursively —
-    so children pending at an interrupt are never lost on resume.
+    so children pending at an interrupt are never lost on resume. Children are
+    queued breadth-first (after every base slice), matching the runner's ordering.
     """
     out: list[PlanSlice] = []
     stack: deque[PlanSlice] = deque(plan)
@@ -251,8 +254,8 @@ def pending_slices(plan: Sequence[PlanSlice], manifest: Manifest) -> list[PlanSl
         if e.get("bisected"):
             children = bisect_slice(s)
             if children is not None:
-                stack.appendleft(children[1])
-                stack.appendleft(children[0])
+                stack.append(children[0])
+                stack.append(children[1])
     return out
 
 
@@ -398,8 +401,13 @@ class BackfillRunner:
                 truncated = len(events) >= MAX_RECORDS
                 children = bisect_slice(s) if truncated else None
                 if children is not None:
-                    queue.appendleft(children[1])
-                    queue.appendleft(children[0])
+                    # Breadth-first: children go to the END of the queue, so every
+                    # base (day) slice is attempted before any truncated day is
+                    # drilled deeper. Base slices already carry up to 250 records —
+                    # plenty for has_any coverage; bisection only adds depth. This
+                    # spends a capped request budget on gate-relevant breadth first.
+                    queue.append(children[0])
+                    queue.append(children[1])
                     total += 2
                     self.counters.slices_bisected += 1
                 if truncated:
