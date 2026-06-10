@@ -125,6 +125,69 @@ def gather_sentiment_health(
     return info
 
 
+def gather_sentiment_feature_health(attached: pl.DataFrame, cfg: Any) -> dict:
+    """Read-only summary over a frame with attached ``sent_*`` features (Phase 17, pure).
+
+    ``cfg`` is a :class:`options_system.sentiment.config.SentimentConfig`. Reports feature
+    row/column counts, the point-in-time coverage rate, how many rows have a non-null score
+    aggregate per window, the latest-observed-age distribution, and per-source / per-topic
+    coverage. No I/O, no network.
+    """
+    from options_system.sentiment.features import _sanitize, sentiment_feature_names
+
+    names = sentiment_feature_names(cfg)
+    present = [c for c in names if c in attached.columns]
+    wname, _wmin = max(cfg.aggregation.windows.items(), key=lambda kv: kv[1])
+    rows = attached.height
+
+    def _rows_with(col: str) -> int:
+        return int(attached.filter(pl.col(col) > 0).height) if col in attached.columns else 0
+
+    widest_count = f"sent_{wname}_count"
+    rows_with_any = _rows_with(widest_count)
+
+    non_null_score_by_window: dict[str, int] = {}
+    for w in cfg.aggregation.windows:
+        col = f"sent_{w}_mean_score"
+        non_null_score_by_window[w] = (
+            int(attached.select(pl.col(col).is_not_null().sum()).item())
+            if col in attached.columns
+            else 0
+        )
+
+    age_col = f"sent_{wname}_latest_age_min"
+    if age_col in attached.columns and rows:
+        ages = attached.select(age_col).drop_nulls()[age_col]
+        age_dist = (
+            {
+                "min": _f(ages.min()),
+                "median": _f(ages.median()),
+                "max": _f(ages.max()),
+            }
+            if ages.len()
+            else {"min": None, "median": None, "max": None}
+        )
+    else:
+        age_dist = {"min": None, "median": None, "max": None}
+
+    return {
+        "feature_rows": rows,
+        "feature_columns": len(present),
+        "feature_columns_stable": present == names,
+        "coverage_rate": (rows_with_any / rows) if rows else 0.0,
+        "non_null_score_by_window": non_null_score_by_window,
+        "latest_observed_age_minutes": age_dist,
+        "coverage_by_source": {
+            s: _rows_with(f"sent_{wname}_source_{_sanitize(s)}_count")
+            for s in cfg.aggregation.breakdown_sources
+        },
+        "coverage_by_topic": {
+            t: _rows_with(f"sent_{wname}_topic_{_sanitize(t)}_count")
+            for t in cfg.aggregation.breakdown_topics
+        },
+    }
+
+
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin CLI report
     import argparse
 

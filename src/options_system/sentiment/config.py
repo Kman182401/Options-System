@@ -66,6 +66,77 @@ class FetchLimits(_Base):
     sec_user_agent: str
 
 
+# The nine aggregate fields the layer knows how to compute (the authoritative set;
+# config may select a subset/order but never invent a name). Mirrors features.py.
+_KNOWN_AGG_FIELDS = frozenset(
+    {
+        "event_count",
+        "degraded_count",
+        "mean_sentiment_score",
+        "sum_sentiment_score",
+        "mean_positive_score",
+        "mean_negative_score",
+        "mean_neutral_score",
+        "max_abs_sentiment_score",
+        "latest_observed_age_minutes",
+    }
+)
+_KNOWN_AGG_GROUPS = frozenset({"all_sources_all_topics", "by_source", "by_topic"})
+
+
+class Aggregation(_Base):
+    """Point-in-time sentiment feature-aggregation config (Phase 17).
+
+    A separate version axis from the event schema: ``feature_version`` (s2) versions
+    the AGGREGATE layer, while the top-level ``sentiment_feature_version`` (s1) versions
+    the raw/scored event schema. ``windows`` maps a window name to its length in minutes;
+    aggregates use the half-open window ``(t - window, t]`` on ``observed_at``.
+    """
+
+    feature_version: str
+    windows: dict[str, int]
+    groups: tuple[str, ...]
+    fields: tuple[str, ...]
+    breakdown_fields: tuple[str, ...]
+    emit_has_any: bool = True
+    breakdown_sources: tuple[str, ...] = ()
+    breakdown_topics: tuple[str, ...] = ()
+
+    @field_validator("windows")
+    @classmethod
+    def _windows_positive(cls, v: dict[str, int]) -> dict[str, int]:
+        if not v:
+            raise ValueError("aggregation.windows must be non-empty")
+        for name, minutes in v.items():
+            if minutes <= 0:
+                raise ValueError(f"aggregation.windows[{name!r}]={minutes} must be > 0 minutes")
+        return v
+
+    @field_validator("groups")
+    @classmethod
+    def _known_groups(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        if not v:
+            raise ValueError("aggregation.groups must be non-empty")
+        bad = sorted(set(v) - _KNOWN_AGG_GROUPS)
+        if bad:
+            raise ValueError(
+                f"aggregation.groups has unknown groups {bad}; known: {sorted(_KNOWN_AGG_GROUPS)}"
+            )
+        return v
+
+    @field_validator("fields", "breakdown_fields")
+    @classmethod
+    def _known_fields(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        if not v:
+            raise ValueError("aggregation field list must be non-empty")
+        bad = sorted(set(v) - _KNOWN_AGG_FIELDS)
+        if bad:
+            raise ValueError(
+                f"unknown aggregate field(s) {bad}; known: {sorted(_KNOWN_AGG_FIELDS)}"
+            )
+        return v
+
+
 class SentimentConfig(_Base):
     """Validated sentiment configuration (one object, loaded once, shared)."""
 
@@ -77,6 +148,7 @@ class SentimentConfig(_Base):
     scoring: Scoring
     storage: Storage
     fetch_limits: FetchLimits
+    aggregation: Aggregation
 
     @field_validator("default_sources", "query_topics")
     @classmethod
@@ -105,6 +177,32 @@ class SentimentConfig(_Base):
                 raise ValueError(
                     f"default_sources lists {src!r} with blocked policy {pol.value!r}."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _aggregation_keys_are_known(self) -> SentimentConfig:
+        """Aggregation breakdown keys must be subsets of the declared sources/topics, and
+        breakdown_fields a subset of the global fields — so feature columns can only ever
+        come from vetted, sanitizable names, never arbitrary raw strings."""
+        agg = self.aggregation
+        unknown_src = sorted(set(agg.breakdown_sources) - set(self.default_sources))
+        if unknown_src:
+            raise ValueError(
+                f"aggregation.breakdown_sources {unknown_src} not in default_sources "
+                f"{list(self.default_sources)}"
+            )
+        unknown_topic = sorted(set(agg.breakdown_topics) - set(self.query_topics))
+        if unknown_topic:
+            raise ValueError(
+                f"aggregation.breakdown_topics {unknown_topic} not in query_topics "
+                f"{list(self.query_topics)}"
+            )
+        unknown_bf = sorted(set(agg.breakdown_fields) - set(agg.fields))
+        if unknown_bf:
+            raise ValueError(
+                f"aggregation.breakdown_fields {unknown_bf} not in aggregation.fields "
+                f"{list(agg.fields)}"
+            )
         return self
 
     @classmethod

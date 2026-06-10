@@ -291,7 +291,7 @@ Phase 6. ISM is excluded (removed from FRED in 2016 over licensing).
 | model inputs | `features/` | leakage-safe, point-in-time price + macro-event features |
 | learning target | `labeling/` | triple-barrier labels (CUSUM events, uniqueness weights) |
 | honest evaluation | `validation/` | purged/embargoed CV, CPCV, PBO/PSR/DSR (leak-safe) |
-| text/news sentiment | `sentiment/` | **Phase 15 zero-spend scaffold:** fail-closed GDELT/SEC-EDGAR adapters + point-in-time event schema + local FinBERT / deterministic Fake scorer. No model verdict yet — see `docs/SENTIMENT.md` |
+| text/news sentiment | `sentiment/` | **Zero-spend scaffold:** fail-closed GDELT/SEC-EDGAR adapters + point-in-time event schema + local FinBERT / deterministic Fake scorer (Phase 15–16). **Phase 17:** point-in-time aggregate features (`features.py`, version s2) + leak-free label join on `t0` (`join.py`) + offline coverage report (`coverage.py`). No model verdict yet — see `docs/SENTIMENT.md` |
 | signal model | `models/` | regularized LightGBM directional signal + honest CPCV/PBO/DSR verdict (registry/champion–challenger deferred) |
 | decisions | `strategy/` | nautilus Strategy (Claude-researched later) |
 | safety | `risk/` | sizing, caps, kill-switch, broker-side stops |

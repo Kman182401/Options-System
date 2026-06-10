@@ -144,10 +144,93 @@ network call** (`network_used=false`, exit 0). To enable later, set a real UA
 **This phase does not authorize strategy, backtest, or live trading, and ran no model
 verdict.**
 
+## Phase 17 — point-in-time feature aggregation + label-join (2026-06-09)
+
+A **fixture-first, offline** feature-engineering scaffold. It answers one question:
+*given raw/scored sentiment events on disk, can we turn them into causal, versioned
+sentiment features and attach them to labels with `observed_at <= label t0`, without
+leakage?* It builds the aggregation + join + coverage tooling and proves point-in-time
+correctness on fixtures. **No network, no scoring, no model training, no signal verdict,
+no strategy/backtest, no broad ingestion, no IBKR/execution.**
+
+### Versioning — two separate axes
+
+- `sentiment_feature_version` (**s1**) — the raw/scored **event schema** version, stamped
+  on every `RawNewsEvent`/`ScoredNewsEvent`. **Unchanged** by this phase.
+- `aggregation.feature_version` (**s2**) — the **aggregate feature layer** version. s2 is
+  the *first aggregate feature version*, built on s1 events. Emitted feature/coverage
+  frames stamp `sentiment_feature_version = s2`. These are different layers (events vs
+  aggregates), so the version was not bumped silently — s1 events keep their s1 stamp.
+
+### The aggregate features (`config/sentiment.yaml` → `aggregation`)
+
+- **Windows** (trailing, UTC): `15m`, `60m`, `240m`, `1d`.
+- **Groups**: `all_sources_all_topics` (the full field set), `by_source`, `by_topic`
+  (the reduced `breakdown_fields` over curated, **sanitized**, config-vetted source/topic
+  lists — never arbitrary raw strings).
+- **Global fields** (9): `event_count`, `degraded_count`, `mean_sentiment_score`,
+  `sum_sentiment_score`, `mean_positive_score`, `mean_negative_score`,
+  `mean_neutral_score`, `max_abs_sentiment_score`, `latest_observed_age_minutes`; plus a
+  per-window `has_any` Int8 missing flag.
+- **Breakdown fields** (per source / per topic): `event_count`, `mean_sentiment_score`.
+- Conservative first pass: **80 columns total**, all prefixed `sent_` with stable names
+  (e.g. `sent_15m_count`, `sent_1d_source_gdelt_mean_score`, `sent_60m_topic_fed_count`).
+  `sentiment_feature_names(cfg)` is deterministic (same config → same ordered names).
+
+### `observed_at` vs `published_at` vs `ingested_at` — why `observed_at` is the PIT key
+
+Aggregation keys on **`observed_at`** only. It is the leakage-safe clock — the earliest
+moment our system could have known the item. `published_at` can be *earlier* than we
+could have known it (using it would feed information from before we had it);
+`ingested_at` can be *later* (an implementation artefact of when we stored it). The window
+is **half-open `(t - window, t]`**: an event exactly at `t` is knowable and included; an
+event exactly at `t - window` has just aged out and is excluded. Deterministic, testable.
+
+### Missing-data behavior
+
+Empty window ⇒ count fields `0`, score aggregates **null** (not 0, so a model can tell
+"no events" from a real zero), `has_any = 0`. Rows are **never dropped** for missing
+sentiment. Events are deduped to one row per `content_hash` (latest `scored_at` wins), so
+a headline scored by several models is counted once. Degraded events (unscoreable raw
+items) are counted in `degraded_count` only and excluded from score aggregates.
+
+### Label-join design (`sentiment/join.py`)
+
+`attach_to_micro_labels` / `attach_to_daily_labels` attach the aggregate features onto the
+micro (`data/micro_labels/`) and daily (`data/labels/`) label tables on **`t0`** (the
+event/decision time). They **never** read `t1`, returns, or the label outcome; outcome
+columns flow through as passengers. Every label row is preserved. Each returns
+`(attached_frame, coverage_metadata)`.
+
+### Coverage report (`python -m options_system.sentiment.coverage`)
+
+Read-only, offline. Attaches features to labels and summarizes coverage — label rows,
+sentiment rows, `rows_with_any_sentiment`, coverage rate, coverage by window /
+source / topic, `events_used`, duplicate count, degraded count, null-feature count,
+feature-column stability, and the `observed_at` / label-time ranges. Never writes the data
+lake. With no sentiment/labels on disk it prints a clean **0% coverage** report and
+exits 0.
+
+```sh
+# Coverage on fixtures (offline; no network, no spend):
+uv run python -m options_system.sentiment.coverage \
+    --label-type micro \
+    --fixture tests/fixtures/sentiment/scored_events_pit.json \
+    --label-fixture tests/fixtures/sentiment/micro_labels_for_join.json --no-write
+
+# Coverage against the local lake (default; offline):
+uv run python -m options_system.sentiment.coverage --label-type micro --symbols ES NQ
+```
+
+This phase used **fixture/local data only**. **No model verdict was run. No
+strategy/backtest/live trading is authorized.** Actual historical sentiment coverage still
+needs to be measured (a bounded, free/no-auth GDELT plan) before any model training.
+
 ## Next (not yet authorized to implement here)
 
-The GDELT live shape matches the fixtures (no adapter normalization needed). Next is a
-**fixture-first point-in-time sentiment feature aggregation + label-join design**
-(still offline / scaffold). If a future live run on a non-rate-limited egress surfaces
-field differences, normalize the adapter first. **Do not** recommend model training
-until actual historical sentiment coverage is measured.
+The aggregation + joins are clean and proven on fixtures. The next step is to **measure
+actual historical sentiment coverage** with a carefully designed, **bounded, free/no-auth
+GDELT** plan (respecting the 1-req/5s per-IP limit that throttled the Phase 16 smoke on the
+shared VPN egress) — still **no training**. Use the coverage report to decide whether
+coverage is sufficient before any model is considered. If a future live run on a
+non-rate-limited egress surfaces field differences, normalize the adapter first.

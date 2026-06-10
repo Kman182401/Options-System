@@ -61,3 +61,62 @@ fetch_limits:
   max_records: 250            # hard cap on records per bounded fetch
   default_language: "eng"     # GDELT language code; null = any
   sec_user_agent: "Options-System research (contact: set-in-env)"  # SEC requires a UA
+
+# Point-in-time sentiment feature AGGREGATION (Phase 17 — fixture/offline scaffold).
+#
+# This is a SEPARATE version axis from sentiment_feature_version above. That top-level
+# value (s1) stamps the raw/scored EVENT schema and is unchanged. `aggregation.feature_version`
+# is the AGGREGATE feature layer — s2 is the first aggregate feature version, built on s1
+# events. Emitted feature/coverage frames stamp sentiment_feature_version = this value.
+#
+# Causality: every aggregate uses observed_at (NOT published_at / ingested_at) and the
+# half-open window (target_time - window, target_time]. No network, no scoring here.
+aggregation:
+  feature_version: "s2"
+
+  # Trailing windows (name -> minutes). All UTC. The widest window doubles as the
+  # "has any prior sentiment" horizon for coverage.
+  windows:
+    "15m": 15
+    "60m": 60
+    "240m": 240
+    "1d": 1440
+
+  # Which breakdown groups to emit. all_sources_all_topics gets the full field set;
+  # by_source / by_topic get the reduced breakdown_fields over the curated lists below.
+  groups:
+    - all_sources_all_topics
+    - by_source
+    - by_topic
+
+  # Full field set for the global (all_sources_all_topics) group.
+  fields:
+    - event_count
+    - degraded_count
+    - mean_sentiment_score
+    - sum_sentiment_score
+    - mean_positive_score
+    - mean_negative_score
+    - mean_neutral_score
+    - max_abs_sentiment_score
+    - latest_observed_age_minutes
+
+  # Reduced field set for the per-source / per-topic breakdowns (keeps column count
+  # conservative — full fields only at the global level).
+  breakdown_fields:
+    - event_count
+    - mean_sentiment_score
+
+  # Emit a per-(group, window) explicit missing flag (Int8: 1 if any event, else 0) for
+  # the global group, so a model can tell "score null because no events" from a real null.
+  emit_has_any: true
+
+  # Curated, SANITIZED breakdown keys. MUST be subsets of default_sources / query_topics
+  # above — feature columns are never derived from arbitrary raw strings.
+  breakdown_sources:
+    - gdelt
+    - sec_edgar
+  breakdown_topics:
+    - fed
+    - inflation
+    - rates
