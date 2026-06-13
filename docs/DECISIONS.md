@@ -755,3 +755,25 @@ strategy, no paid data (`OPTIONS_DATABENTO_SPEND_OK` stayed unset throughout).
   registered upstream but only transcribed into a committed doc on the same date the data
   was scored, so the repo alone could not prove the goalposts predated the data). Docs-only;
   no model, no data, no network; `OPTIONS_DATABENTO_SPEND_OK` unset.
+
+## Phase 19 — sentiment micro-model A/B edge verdict (2026-06-13)
+- Ran the pre-registered A/B exactly as frozen: an **opt-in** `with_sentiment` block on the
+  micro-model dataset (Phase-10 `with_ta` pattern — additive, default off, baseline byte-
+  identical; the row gate stays on the m1 features so both arms admit the identical rows;
+  sentiment nulls KEPT, never imputed). Baseline (`mm1`, OFI-only) and treatment (`mm2` =
+  `mm1` + the 80 `s2` `sent_*` features) run through the **unchanged** search / fold-local
+  weighting / CPCV / PBO / DSR and the **six unchanged gates** read from
+  `config/micro_model.yaml`. New: `config/phase19.yaml` + `phase19_config.py` (A/B scaffolding
+  only — no gates/params duplicated), `microstructure_model/phase19_ab.py` (orchestrator +
+  pure attribution/decision), `observability/phase19_ab_health.py`. Reads only local lakes —
+  no Databento/IBKR/network; `OPTIONS_DATABENTO_SPEND_OK` unset; zero spend.
+- **Verdict: no significant edge — both symbols. Sentiment is the fifth honest null.**
+  Window `t0 ∈ [2026-03-10, 2026-06-06]`, per symbol (never pooled); rows ES 1,132 / NQ 1,036,
+  effective N 735.5 / 696.3. Treatment ES failed 1/6 (only PBO 0.734 — a selection overfit;
+  gross DSR 0.84 + CPCV median +0.010 did not survive PBO), NQ failed 3/6 (gross DSR 0.081,
+  macro F1 0.177, CPCV median −0.034). Attribution `null` on both. SHAP shows the treatment
+  arm leaned heavily on sentiment (`sent_1d_topic_rates_mean_score` #1 on both) — used, not
+  ignored, and still no OOS edge. No model promoted; no strategy/backtest/risk/execution/live
+  trading authorized. Remaining forks: MBP-10 (paid, blocked) or a horizon/regime redesign —
+  no sentiment re-tuning. Method + numbers: `docs/PHASE19_AB.md`; verdict table updated in
+  `docs/RESEARCH_VERDICTS.md`. New tests: `tests/test_phase19_ab.py` (11).

@@ -1,0 +1,28 @@
+# Phase 19 — sentiment micro-model A/B edge verdict (declarative scaffolding ONLY).
+#
+# Holds ONLY the A/B experiment scaffolding: the frozen supported-region window, the
+# two arms, the symbols, and the MLflow experiment name. The model hyperparameters,
+# the 8-config search grid, the seed, and the SIX verdict gates are NOT here — they
+# are read unchanged from config/micro_model.yaml (the mm1 source of truth). The full
+# frozen contract is docs/PHASE19_PREREGISTRATION.md. Do not duplicate gates/params.
+
+phase19_version: "p19"
+
+# The Phase-18 supported region: label t0 in [archive cutoff, coverage end].
+window:
+  start: "2026-03-10" # = the 92-day GDELT archive cutoff (supported region only)
+  end: "2026-06-06" # micro-label coverage end
+
+symbols: [ES, NQ] # per symbol, never pooled
+
+# The ONLY delta between the two arms is the sentiment block.
+arms:
+  - name: baseline # mm1: the unchanged 17 m1 OFI features
+    with_sentiment: false
+    model_version: "mm1"
+  - name: treatment # mm2 = mm1 + the s2 sentiment block (sent_* attached on t0)
+    with_sentiment: true
+    model_version: "mm2"
+
+sentiment_feature_version: "s2" # cross-checked against the sentiment aggregation version
+mlflow_experiment: "micro-signal-model-phase19-ab"
