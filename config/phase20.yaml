@@ -1,0 +1,41 @@
+# Phase 20 — meta-labeling edge verdict (declarative scaffolding + NEW knobs ONLY).
+#
+# Holds ONLY what Phase 20 adds on top of mm1: the full-window row set, the supported
+# sentiment region (for the diagnostic sub-analysis), the symbols, the fixed primary
+# side rule, the fixed decision threshold (tau), the meta-skill balanced-accuracy floor
+# (the disclosed binary substitute for the mm1 macro-F1 gate), and the MLflow
+# experiment name. The LightGBM params, the 8-config search grid, the seed, the
+# CPCV/PBO/DSR machinery, and the FIVE inherited verdict gates are read UNCHANGED from
+# config/micro_model.yaml (mm1) — never duplicated here. The full frozen contract is
+# docs/PHASE20_PREREGISTRATION.md. Do not tune any of these after seeing results.
+
+phase20_version: "p20"
+
+# Full Phase-14 window (NOT the Phase-19 supported-region subset) — maximize effective N
+# for the core meta-labeling question. s2 sentiment features are null/NaN before
+# 2026-03-10 (kept, not imputed) and populated thereafter.
+window:
+  start: "2026-01-26" # micro-label coverage start (full combined dataset)
+  end: "2026-06-06" # micro-label coverage end
+
+# The Phase-18 GDELT archive cutoff: s2 features are populated from here on. The
+# secondary sentiment sub-analysis reports SHAP on t0 >= this date (diagnostic, not a gate).
+supported_region_start: "2026-03-10"
+
+symbols: [ES, NQ] # per symbol, never pooled
+
+# The FIXED primary side rule: sign(<primary_feature>) at t0 — a deterministic causal
+# function of past data (not a fitted model). Must be the exact m1 feature column name;
+# the implementation STOPs rather than substituting a different feature.
+primary_feature: "ofi_top"
+
+# tau — act on the primary side when P(meta_label = 1) > tau. Fixed a priori; never tuned.
+decision_threshold: 0.5
+
+# The disclosed binary substitute for the mm1 3-class macro-F1 gate: arm M is credited
+# only if the meta-model's OOF balanced accuracy >= this AND the acted-on hit-rate
+# strictly exceeds the always-act (B0) hit-rate.
+meta_skill_min_balanced_accuracy: 0.52
+
+sentiment_feature_version: "s2" # cross-checked against the sentiment aggregation version
+mlflow_experiment: "micro-signal-model-phase20-meta"

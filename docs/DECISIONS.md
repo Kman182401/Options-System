@@ -790,3 +790,34 @@ strategy, no paid data (`OPTIONS_DATABENTO_SPEND_OK` stayed unset throughout).
   commit date of that file is the pre-registration timestamp — following the Phase 19
   pre-registration discipline (`docs/PHASE19_PREREGISTRATION.md`). Docs-only; no model, no
   data, no network; `OPTIONS_DATABENTO_SPEND_OK` unset.
+
+## Phase 20 — meta-labeling edge verdict (2026-06-13)
+- Ran the pre-registered meta-labeling A/B exactly as frozen. A fixed, deterministic, causal
+  **primary** picks the side (`sign(ofi_top)` as-of `t0` — not a fitted model ⇒ no
+  primary-model leakage, no nested OOF), and a **binary LightGBM meta-model** over the m1 OFI
+  block + the `s2` sentiment block + `|ofi_top|` predicts `P(meta_label = 1)`; act when
+  `P > τ` (τ = 0.5, fixed). The meta-model is the SOLE fitted component and runs through the
+  **unchanged** purged K-fold / CPCV / PBO / trial-deflated DSR / fold-local class weighting.
+  New code: `config/phase20.yaml` + `phase20_config.py` (NEW knobs only — τ, the meta-skill
+  floor, the window, the primary feature; no gates/params duplicated), `meta_labeling.py`
+  (pure primary-side/meta-label/gating), `meta_lgbm.py` (binary `RegularizedLGBMBinary` +
+  `fit_meta_fold`, reusing the mm1 weighting primitives; mm1 left byte-identical),
+  `microstructure_model/phase20_meta.py` (orchestrator + meta search/eval + B0 reference +
+  pure attribution/decision), `observability/phase20_meta_health.py`. Five inherited mm1
+  gross gates applied unchanged; the 3-class macro-F1 gate (undefined for a binary gate)
+  replaced by the disclosed **meta-skill** gate (OOF balanced accuracy ≥ 0.52 AND acted-on
+  hit-rate > always-act hit-rate). Reads only local lakes — no Databento/IBKR/network;
+  `OPTIONS_DATABENTO_SPEND_OK` unset; zero spend.
+- **Verdict: no significant edge — both symbols. Meta-labeling is the sixth honest null.**
+  Full window `t0 ∈ [2026-01-26, 2026-06-06]`, per symbol; meta-set ES 1,688 (effN 1,089.3) /
+  NQ 1,519 (1,023.1). Arm M: ES fails 2/6 (gross DSR 0.060, CPCV median −0.010), NQ fails 4/6
+  (PBO 0.722, gross DSR 0.247, mean gross −1.2e-5, CPCV median −0.027). Notably the
+  **meta-skill gate PASSED on both** (acted-hit > always-hit: ES 0.122→0.134, NQ 0.103→0.130;
+  balAcc 0.52/0.57) — the gate *did* add precision, just far too little to survive deflation.
+  B0 (always-act reference) failed both, as expected. SHAP shows the gate leaned ≈70–75% on
+  the `s2` block (used, not ignored). No model promoted; no strategy/backtest/risk/execution/
+  live trading authorized. Because meta-labeling is the canonical remedy for this regime, the
+  null points the binding constraint at sample size / edge existence at this horizon, not
+  model framing — favouring the data-changing forks (MBP-10, paid/blocked; or horizon/regime
+  redesign). Method + numbers: `docs/PHASE20_META.md`; verdict table updated in
+  `docs/RESEARCH_VERDICTS.md`. New tests: `tests/test_phase20_meta.py` (22).
