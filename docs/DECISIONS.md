@@ -777,3 +777,16 @@ strategy, no paid data (`OPTIONS_DATABENTO_SPEND_OK` stayed unset throughout).
   trading authorized. Remaining forks: MBP-10 (paid, blocked) or a horizon/regime redesign —
   no sentiment re-tuning. Method + numbers: `docs/PHASE19_AB.md`; verdict table updated in
   `docs/RESEARCH_VERDICTS.md`. New tests: `tests/test_phase19_ab.py` (11).
+
+## Phase 20 — pre-registration committed before any modeling (2026-06-13)
+- The full Phase 20 **meta-labeling** contract — the fixed causal primary side rule
+  (`sign(ofi_top)` at `t0`), the binary meta-label, the meta-model and its feature set, the
+  fixed decision threshold (τ = 0.5), the frozen row set/window, every inherited `mm1`
+  parameter, the verdict gates (the five inherited unchanged + the one disclosed binary
+  meta-skill substitute for the 3-class F1 gate), the attribution logic, the decision rule,
+  and the anti-snooping commitments — is frozen verbatim in
+  **`docs/PHASE20_PREREGISTRATION.md`** (single source of truth; gates not restated here).
+- Committed **before any Phase 20 model was trained and before any data reached a model** — the
+  commit date of that file is the pre-registration timestamp — following the Phase 19
+  pre-registration discipline (`docs/PHASE19_PREREGISTRATION.md`). Docs-only; no model, no
+  data, no network; `OPTIONS_DATABENTO_SPEND_OK` unset.
