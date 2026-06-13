@@ -302,7 +302,18 @@ Per symbol (supported region): **ES** 1,132 labels → 1,111 has_any (98.1%); **
 1,020 (98.5%). The monotone `15m < 60m ≈ 240m < 1d` shape is the expected correctness
 signature (a wider lookback can only add events), not a leakage smell — the join uses
 `observed_at ≤ t0` on a half-open window, the same PIT rule proven by Phase 17's leakage
-teeth.
+teeth (re-confirmed here by a 200-sample brute-force recompute of the `(t0−1d, t0]` window
+against `sent_1d_count`: 0 mismatches).
+
+Two honest notes on reading these numbers: **(1)** in the supported region the `240m` and
+`1d` coverage are *identical* (both 2,131 / 98.3%) — not a transcription error but a density
+effect: almost every label with any prior-4h macro news also has prior-24h news. The windows
+diverge where data is sparser (unsupported region: 895 vs 925; and the `15m` window, 86.3%,
+is where they genuinely separate). **(2) G3 is a pooled gate by pre-registration** — per
+symbol the `sent_1d` has_any counts (ES 1,111 / NQ 1,020) are each individually *below*
+1,400. The ≥1,400 threshold was fixed against the **pooled** ES+NQ total (2,131), and only
+that pooled figure is claimed to clear it; the per-symbol figures are reported for
+transparency, not as independent G3 passes.
 
 ### Verdict — ALL GATES PASS
 
