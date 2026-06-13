@@ -821,3 +821,21 @@ strategy, no paid data (`OPTIONS_DATABENTO_SPEND_OK` stayed unset throughout).
   model framing — favouring the data-changing forks (MBP-10, paid/blocked; or horizon/regime
   redesign). Method + numbers: `docs/PHASE20_META.md`; verdict table updated in
   `docs/RESEARCH_VERDICTS.md`. New tests: `tests/test_phase20_meta.py` (22).
+
+## Phase 21 — pre-registration committed before any modeling (2026-06-13)
+- The full Phase 21 contract — the realized-volatility target (5-minute sub-sampled RV on
+  `bars_1m`, log-RV, primary horizon h=5), the **HAR-RV (Corsi 2009)** benchmark arm, the
+  single fixed regularized LightGBM treatment arm (HAR predictors + the existing leak-safe
+  feature blocks; **no hyperparameter search**), the QLIKE loss, the one-sided Diebold-Mariano
+  test at 5%, the anchored expanding-window walk-forward with forward-target purge, the
+  leak-safe calm/turbulent regime split, the two gates (G1 accuracy + DM significance, G2
+  regime robustness), the per-symbol decision rule, and the anti-snooping commitments — is
+  frozen verbatim in **`docs/PHASE21_PREREGISTRATION.md`** (single source of truth; gates not
+  restated here).
+- Committed **before any Phase 21 model was trained and before any data reached a model** — the
+  commit date of that file is the pre-registration timestamp — following the Phase 19/20
+  pre-registration discipline. This is the deliberate **pivot away from intraday direction**
+  after six honest nulls (price 5, macro 6, TA 10, order-flow 14, sentiment 19, meta-labeling
+  20) toward a genuinely forecastable target (realized volatility), and the natural substrate
+  for the repo's Phase 2 options work. Docs-only; no model, no data, no network;
+  `OPTIONS_DATABENTO_SPEND_OK` unset.
