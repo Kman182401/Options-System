@@ -50,9 +50,17 @@ a positive CPCV path-median. The bar never moves between phases — only the inp
 - **Current state: no promoted model.**
 - **No strategy / economic backtest is authorized.**
 - **No live trading is authorized** (and the system is hard-locked to paper).
-- **Next allowed lever: zero-spend news/sentiment *feasibility* only** — design,
-  scaffold, and point-in-time correctness on fixtures (Phase 15). No model verdict,
-  no strategy, no broad ingestion. See `docs/SENTIMENT.md`.
+- **Sentiment feasibility is now established (Phases 15–18).** The zero-spend
+  news/sentiment lever was scaffolded (15), live-shape-validated (16), given a PIT feature
+  layer (17), and measured for historical coverage (18). The **pre-registered Phase 18
+  coverage gates passed** over the supported archive region (sent_1d has_any 98.3% ≥ 60%,
+  sent_240m 98.3% ≥ 35%, pooled has_any 2,131 ≥ 1,400; zero spend, network = GDELT only).
+  See `docs/SENTIMENT.md`.
+- **Next allowed lever: Phase 19 — the sentiment micro-model A/B *edge* verdict.** Coverage
+  passing authorizes *training/evaluating* a model; it is **not** an edge result. Phase 19
+  must clear the same unchanged bar above, and an honest null remains the most likely and
+  fully acceptable outcome. No strategy / economic backtest / risk / execution / live trading
+  is authorized until a lever clears the bar.
 - **Paid-data escalation (e.g. MBP-10 multi-level OFI) is BLOCKED** unless the operator
   explicitly unfreezes billing and authorizes a new capped run. See
   `docs/BILLING_SAFETY.md` and `src/options_system/common/databento_guard.py`.

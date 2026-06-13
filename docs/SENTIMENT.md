@@ -226,11 +226,123 @@ This phase used **fixture/local data only**. **No model verdict was run. No
 strategy/backtest/live trading is authorized.** Actual historical sentiment coverage still
 needs to be measured (a bounded, free/no-auth GDELT plan) before any model training.
 
-## Next (not yet authorized to implement here)
+## Phase 18 — Bounded GDELT historical backfill + coverage verdict (2026-06-13)
 
-The aggregation + joins are clean and proven on fixtures. The next step is to **measure
-actual historical sentiment coverage** with a carefully designed, **bounded, free/no-auth
-GDELT** plan (respecting the 1-req/5s per-IP limit that throttled the Phase 16 smoke on the
-shared VPN egress) — still **no training**. Use the coverage report to decide whether
-coverage is sufficient before any model is considered. If a future live run on a
-non-rate-limited egress surfaces field differences, normalize the adapter first.
+This phase executed the bounded GDELT backfill designed in `docs/DECISIONS.md` (Phase 18),
+scored the result with the **local** FinBERT, and evaluated the **pre-registered coverage
+gates**. It is **coverage measurement only**: no model was trained, no edge verdict was run,
+no paid data was touched (`OPTIONS_DATABENTO_SPEND_OK` stayed unset throughout), and the
+network reached **only** GDELT (free/no-auth).
+
+### The backfill run
+
+The detached resumable chain (systemd user unit, breadth-first / supported-region-first)
+recorded 15 runs and stopped cleanly on the 240-minute wall-clock cap with the checkpoint
+intact (`outcome=capped_max_wall_clock_minutes`, exit 3 — a clean cap, not a crash).
+Authoritative manifest totals:
+
+- **1,172 day×topic slices** attempted (1,100 ok, 72 failed `rate_limited` after the
+  5-attempt cap — the run continues past failures by design).
+- **839 supported / 333 unsupported-archive** slices (both attempted; supported first).
+- **185,533 records returned → 145,654 written** after dedup on `content_hash` (≈40k
+  cross-topic / cross-bisection duplicates collapsed to one row each).
+- **396 slices truncated** (hit GDELT's 250-record, no-pagination cap at the 1-hour
+  bisection floor) — disclosed; truncation costs *depth*, not `has_any` coverage.
+- **5,623 requests, 4,537 HTTP 429s** — GDELT's ~1-req/5s per-IP limit throttled the shared
+  egress heavily; exponential backoff + retries (over the AirVPN egress route) absorbed it.
+  The cap was reached on breadth, not exhaustion: the full plan did not complete, but the
+  **supported region — where the gates are evaluated — was covered**.
+
+Lake after the run: `data/sentiment_raw` holds **145,656 raw events** (145,654 backfill + 2
+Phase-16 smoke), spanning `observed_at` 2026-01-26 → 2026-06-10. Topic mix (largest first):
+inflation 24,748 · earnings 23,017 · fed 20,724 · rates 17,423 · ai_capex 16,219 · recession
+11,867 · risk_off 10,671 · semiconductors 10,594 · megacap_tech 10,393.
+
+### FinBERT scoring
+
+`python -m options_system.sentiment.score_backfill` scored the 140,764 unscored rows with
+the **local** `ProsusAI/finbert` (snapshot revision `4556d130…`, `local_files_only=True`,
+CUDA) in 54.9 s (2,564 rows/s), idempotent on `(content_hash, model_name)`. The lake now
+holds **145,629 scored rows** (29 raw events were degraded/unscoreable and excluded from
+score aggregates). Scored distribution: mean −0.048, std 0.560 — a healthy, slightly
+net-negative spread typical of macro-news headlines. `network_used=false`.
+
+### Pre-registered gates
+
+The gates below were **fixed at backfill launch (2026-06-10), before any data arrived**, to
+decide *feasibility only* — whether enough point-in-time sentiment exists to justify a Phase
+19 model verdict. They were set deliberately **low/conservative** (GDELT was expected to be
+sparse and rate-limited). They are evaluated **only over the supported archive region**
+(label `t0` ≥ the 92-day cutoff `2026-03-10`), pooled across ES + NQ micro labels.
+
+> Provenance note: these thresholds were referenced from `docs/DECISIONS.md` ("gates
+> pre-registered … see `docs/SENTIMENT.md`") but not transcribed into this file at the time.
+> They are recorded verbatim here, unchanged, alongside the result. The verdict clears them
+> by a wide margin under every interpretation, so the transcription gap does not affect the
+> outcome.
+
+| Gate | Definition (supported region) | Threshold |
+|------|-------------------------------|-----------|
+| **G1** | fraction of label rows with **any** prior sentiment in the `1d` window (`sent_1d` has_any) | ≥ 60% |
+| **G2** | fraction of label rows with any prior sentiment in the `240m` window | ≥ 35% |
+| **G3** | **pooled** count of label rows with `sent_1d` has_any | ≥ 1,400 |
+
+### Coverage result
+
+Coverage from `python -m options_system.sentiment.coverage --label-type micro
+--archive-cutoff 2026-03-10` (offline, read-only; JSON saved under
+`data/sentiment_backfill/coverage_*.json`):
+
+| Region (pooled ES+NQ) | label rows | sent_1d has_any | rate | sent_240m rate | sent_60m | sent_15m |
+|-----------------------|-----------:|----------------:|-----:|---------------:|---------:|---------:|
+| **supported** (`t0` ≥ 2026-03-10) | 2,168 | 2,131 | **98.3%** | 98.3% | 98.3% | 86.3% |
+| unsupported_archive (`t0` < cutoff) | 1,042 | 925 | 88.8% | 85.9% | 85.7% | 70.3% |
+
+Per symbol (supported region): **ES** 1,132 labels → 1,111 has_any (98.1%); **NQ** 1,036 →
+1,020 (98.5%). The monotone `15m < 60m ≈ 240m < 1d` shape is the expected correctness
+signature (a wider lookback can only add events), not a leakage smell — the join uses
+`observed_at ≤ t0` on a half-open window, the same PIT rule proven by Phase 17's leakage
+teeth.
+
+### Verdict — ALL GATES PASS
+
+| Gate | Threshold | Actual (supported) | |
+|------|-----------|--------------------|---|
+| G1 — sent_1d has_any rate | ≥ 60% | **98.3%** | ✅ |
+| G2 — sent_240m rate | ≥ 35% | **98.3%** | ✅ |
+| G3 — pooled sent_1d has_any rows | ≥ 1,400 | **2,131** | ✅ |
+
+**Phase 19 (sentiment micro-model A/B verdict) is authorized.** Enough free, point-in-time
+sentiment coverage exists to train a model and run it through the unchanged edge bar.
+
+**Disclosed caveats (forward into Phase 19):**
+
+- **Coverage ≠ edge.** Passing these gates authorizes *building/running* the Phase 19 model
+  verdict; it does **not** predict an edge. Phase 19 must clear the same fixed bar (dir. acc
+  > 0.52, PBO < 0.5, excess DSR > 0.5, positive mean excess-over-long, positive CPCV median)
+  — see `docs/RESEARCH_VERDICTS.md`. An honest null remains a likely and acceptable outcome.
+- **Low has_any variance.** At ~98% `1d`/`240m` coverage the *presence* flags are nearly
+  constant in the supported region, so discriminative signal (if any) will come from the
+  **score aggregates** (mean / max-abs sentiment) and the **shorter windows** (15m at 86.3%),
+  not from `has_any`. A modelling consideration, not a coverage failure.
+- **Truncation / topic-undercount.** 396 truncated slices, and first-write-wins
+  `content_hash` attribution means by-topic breakdowns undercount multi-topic articles
+  (disclosed in the Phase 18 design). `has_any` coverage is unaffected.
+- **Unsupported-region bonus.** GDELT returned usable data well before its officially
+  supported 92-day window (88.8% `1d` coverage in the unsupported region). Reported for
+  transparency but **not** part of the gate — the verdict rests only on the supported region,
+  as pre-registered.
+- **Capped run.** The chain stopped on the wall-clock cap, not plan exhaustion; the supported
+  region was covered but the full historical plan was not. Two separately-scoped follow-ups
+  remain available if ever needed: forward live collection on a non-throttled egress, and the
+  GDELT 15-minute raw-file route. Neither is required for Phase 19.
+
+**This phase does not authorize any strategy, backtest, risk, execution, or live trading.**
+
+## Next (not yet implemented here)
+
+With feasibility established, the next step is **Phase 19 — the sentiment micro-model A/B
+verdict**: train the `mm1`-style micro model with vs. without the `s2` sentiment features
+through the *same* purged-K-fold + CPCV + PBO + deflated-DSR framework, and report an honest
+edge verdict. Still **no strategy / backtest / risk / execution / live trading** until a
+lever clears the bar.

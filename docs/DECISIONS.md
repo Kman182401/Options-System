@@ -723,3 +723,22 @@ strategy, no paid data (`OPTIONS_DATABENTO_SPEND_OK` stayed unset throughout).
   guarantee, scoring idempotency, coverage split). Full `pytest` green (397),
   ruff format/check + ty clean, zero `# type: ignore`. New deps: **none**
   (`huggingface_hub` was already a transformers dependency).
+
+### Execution + coverage verdict (2026-06-13)
+- The detached chain ran to the 240-min wall-clock cap (clean stop, checkpoint intact).
+  Manifest: 1,172 slices (1,100 ok / 72 rate-limited), 839 supported / 333 unsupported;
+  185,533 records returned → **145,654 written** after `content_hash` dedup; 396 truncated;
+  5,623 requests / 4,537 HTTP 429s. The supported region (where the gates live) was covered;
+  the full plan was not (capped on breadth).
+- **Local** FinBERT (`ProsusAI/finbert`, rev `4556d130…`, CUDA, `local_files_only`) scored
+  140,764 unscored rows in 54.9 s, idempotent on `(content_hash, model_name)`; lake now holds
+  145,629 scored rows (29 degraded). `network_used=false`; `OPTIONS_DATABENTO_SPEND_OK`
+  unset throughout — **zero spend**.
+- **Pre-registered gates** (fixed 2026-06-10, pre-data; transcribed verbatim into
+  `docs/SENTIMENT.md`), evaluated over the supported archive region (`t0` ≥ 2026-03-10),
+  pooled ES+NQ: **G1** sent_1d has_any 98.3% (≥60) · **G2** sent_240m 98.3% (≥35) · **G3**
+  pooled sent_1d has_any 2,131 (≥1,400) — **ALL PASS**.
+- **Verdict: Phase 19 (sentiment micro-model A/B edge verdict) is authorized.** Coverage ≠
+  edge — Phase 19 must still clear the unchanged edge bar; an honest null remains acceptable.
+  No model/strategy/backtest/risk/execution/live trading was run or authorized by this phase.
+  Coverage JSONs saved under `data/sentiment_backfill/coverage_{pooled,ES,NQ}.json` (gitignored).
