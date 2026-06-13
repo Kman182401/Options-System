@@ -742,3 +742,16 @@ strategy, no paid data (`OPTIONS_DATABENTO_SPEND_OK` stayed unset throughout).
   edge — Phase 19 must still clear the unchanged edge bar; an honest null remains acceptable.
   No model/strategy/backtest/risk/execution/live trading was run or authorized by this phase.
   Coverage JSONs saved under `data/sentiment_backfill/coverage_{pooled,ES,NQ}.json` (gitignored).
+
+## Phase 19 — pre-registration committed before any modeling (2026-06-13)
+- The full Phase 19 contract — the A/B arms (`mm1` baseline vs `mm2` = `mm1` + the `s2`
+  sentiment block), the frozen row set (supported region `t0 ≥ 2026-03-10`, per symbol),
+  every inherited `mm1` parameter, the six **unchanged** verdict gates, the attribution
+  logic, the decision rule, and the anti-snooping commitments — is frozen verbatim in
+  **`docs/PHASE19_PREREGISTRATION.md`** (single source of truth; gates not restated here).
+- It was committed **before any Phase 19 model was trained and before any data reached a
+  model** — the commit date of that file is the pre-registration timestamp. This is the
+  deliberate corrective to the **Phase 18 provenance gap** (Phase 18’s gates were pre-
+  registered upstream but only transcribed into a committed doc on the same date the data
+  was scored, so the repo alone could not prove the goalposts predated the data). Docs-only;
+  no model, no data, no network; `OPTIONS_DATABENTO_SPEND_OK` unset.
