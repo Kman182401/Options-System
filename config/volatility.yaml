@@ -1,0 +1,74 @@
+# Phase 21 — volatility-forecast skill verdict (declarative; NEW pre-registered knobs).
+#
+# Loaded by volatility/config.py into a typed VolatilityConfig. Holds the new Phase-21
+# knobs the frozen contract fixes a priori: the RV estimator params, the horizon set, the
+# HAR benchmark lags, the SINGLE fixed (no-search) LightGBM regressor config, the
+# anchored expanding walk-forward OOS window, the regime-split rule, and the Diebold-
+# Mariano level. The full frozen contract is docs/PHASE21_PREREGISTRATION.md. Do not tune
+# any of these after seeing results (anti-snooping).
+#
+# This is a FORECAST-SKILL verdict (does ML beat HAR-RV on QLIKE?), not a strategy and not
+# an economic backtest. Forecast skill is not tradeable money.
+
+volatility_version: "vf1"
+seed: 7
+
+# Pre-registered symbol set — the canonical verdict is defined over EXACTLY these (per symbol,
+# never pooled). A subset/superset run is refused for the saved verdict (diagnostic only).
+symbols: [MES, MNQ]
+
+# --- Realized-variance estimator: 5-minute, five sub-sampled offset grids, averaged ---
+rv:
+  sampling_minutes: 5 # 5-minute sampling — the literature standard (noise vs accuracy)
+  n_subsample_grids: 5 # average the five offset grids (origins 0,1,2,3,4) to reduce noise
+  min_5min_returns_per_session: 20 # drop sessions with fewer 5-min returns (incomplete)
+
+# --- Forecast horizons (trading days). Primary h=5 is GATED; 1 and 22 are diagnostics. ---
+horizons:
+  primary: 5
+  diagnostic: [1, 22]
+
+# --- HAR-RV (Corsi 2009) benchmark lag windows (trading days): daily / weekly / monthly ---
+har:
+  lags: [1, 5, 22]
+
+# --- The SINGLE fixed, heavily-regularized LightGBM regressor (NO hyperparameter search) ---
+# mm1 regularization philosophy. objective "qlike" = QLIKE-consistent custom objective on
+# the variance scale; the DISCLOSED fallback (if the custom objective is infeasible) is
+# "l2_log_rv" (squared error on log-RV) — stated in results, never silently chosen.
+lgbm:
+  objective: "qlike"
+  n_estimators: 600
+  learning_rate: 0.02
+  max_depth: 3
+  num_leaves: 7
+  min_child_samples: 100
+  subsample: 0.7
+  subsample_freq: 1
+  colsample_bytree: 0.7
+  reg_alpha: 1.0
+  reg_lambda: 10.0
+  max_bin: 127
+  early_stopping_rounds: 50
+  inner_val_fraction: 0.2
+
+# --- Anchored expanding-window walk-forward OOS evaluation ---
+# Train anchors from the start of history; OOS scoring begins at oos_start; the OOS period
+# is split into n_steps contiguous folds, each refit on everything before it (expanding).
+walk_forward:
+  oos_start: "2022-01-01" # OOS 2022-01 -> end of data (~2026-06); initial train = history before
+  n_steps: 18 # ~quarterly expanding refits across the OOS span
+
+# --- Regime split for G2 (causal, leak-safe) ---
+regime:
+  trailing_days: 22 # turbulent if trailing-22d mean RV > causal expanding-window median
+
+# --- Diebold-Mariano test (G1) ---
+dm:
+  alpha: 0.05 # one-sided significance level; HAC (Newey-West) lag = h-1 + HLN small-sample fix
+
+# --- Treatment feature blocks (additive over the 3 HAR predictors) ---
+features:
+  with_price: true # the existing leak-safe price/vol/volume/time/cross-asset blocks (features/)
+  with_macro: true # macro-event features (where the macro_events table is ingested)
+  with_sentiment: true # s2 sentiment aggregates where covered (nulls kept elsewhere, not imputed)

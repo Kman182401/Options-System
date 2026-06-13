@@ -839,3 +839,30 @@ strategy, no paid data (`OPTIONS_DATABENTO_SPEND_OK` stayed unset throughout).
   20) toward a genuinely forecastable target (realized volatility), and the natural substrate
   for the repo's Phase 2 options work. Docs-only; no model, no data, no network;
   `OPTIONS_DATABENTO_SPEND_OK` unset.
+
+## Phase 21 — volatility-forecast skill verdict (2026-06-13)
+- Ran the pre-registered volatility-forecast comparison exactly as frozen. New code: a
+  `volatility/` package — `realized.py` (5-minute sub-sampled daily RV on `bars_1m` + causal
+  HAR predictors + the forward log-RV target), `har.py` (HAR-RV OLS benchmark, arm B), `lgbm.py`
+  (a single fixed regularized LightGBM regressor with a QLIKE-consistent custom objective +
+  train-mean target centering — LightGBM does not boost-from-average for a custom objective — and
+  the disclosed L2-on-log-RV fallback), `dataset.py` (leak-safe daily matrix: HAR predictors +
+  as-of-session-close price/macro/`s2` blocks), `run.py` (anchored expanding walk-forward OOS,
+  gates, decision), `config.py`/`config/volatility.yaml` (all pre-registered knobs); plus
+  `validation/forecast_stats.py` (QLIKE + a Diebold-Mariano test with a Newey-West HAC variance at
+  lag `h−1` and the Harvey-Leybourne-Newbold small-sample correction — the overlap makes a naive DM
+  variance overstate significance) and `observability/volatility_health.py`. Reuses the shared
+  `train_indices` purge primitive for the date-anchored OOS (WalkForward's equal-block API cannot
+  express a 2022-01 OOS start, so the leak-safe primitive it delegates to is used directly). Reads
+  only local lakes — no Databento/IBKR/network; `OPTIONS_DATABENTO_SPEND_OK` unset; zero spend.
+- **Verdict: no significant skill at the pre-registered horizon h = 5 — both symbols.** Full
+  history per symbol, OOS 2022→2026 (~1,135 days). At h = 5 the LightGBM treatment is marginally
+  *worse* than HAR-RV (MES QLIKE 0.219 vs 0.210, DM p 0.81; MNQ 0.161 vs 0.157, DM p 0.76) and not
+  regime-robust (better in calm, worse in turbulent) → G1 and G2 fail on both. **Notable
+  non-gated diagnostic: at h = 1 the treatment beats HAR-RV with strong significance on both
+  symbols** (MES DM p≈0, MNQ p=1e-6) — the first benchmark-beating result in the program; at h = 22
+  it loses. Objective used: `qlike` (no fallback). SHAP ~75% price/vol features, ~25% HAR lags, ~0%
+  sentiment (4.4% coverage). No model promoted; no strategy/backtest/risk/execution/live trading
+  authorized (forecast skill is not tradeable money). The h = 1 result is a pre-registered-diagnostic
+  re-scope pointer (operator decision). Method + numbers: `docs/PHASE21_VOL.md`; verdict table
+  updated in `docs/RESEARCH_VERDICTS.md`. New tests: `tests/test_phase21_volatility.py` (17).
