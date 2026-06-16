@@ -14,10 +14,15 @@ new caller is refused here too.
 
 Policy classes
 --------------
-* ``FREE_NO_AUTH`` — free, open, no API key / no account / no card (GDELT, SEC
-  EDGAR). Network is permitted, but ONLY when the caller explicitly opts in
-  (``allow_network=True``, surfaced as a ``--allow-network`` CLI flag). Default
-  stays offline.
+* ``FREE_NO_AUTH`` — free, open, no API key / no account / no card (GDELT DOC, the
+  GDELT GKG bulk archive, SEC EDGAR). Network is permitted, but ONLY when the caller
+  explicitly opts in (``allow_network=True``, surfaced as a ``--allow-network`` CLI
+  flag). Default stays offline.
+* ``FREE_AUTH`` — free, but requires a free API key / account (no card, no charge) —
+  e.g. FRED/ALFRED. Treated at the network gate exactly like ``FREE_NO_AUTH`` (an
+  explicit ``allow_network=True`` is still required); the *key* requirement is enforced
+  by the caller (it reads the key from config), since this module deliberately knows
+  nothing about secrets.
 * ``LOCAL_ONLY`` — runs entirely on this machine (local FinBERT weights). It must
   never perform network access; asking it to is a programming error and is refused.
 * ``PAID_BLOCKED`` — costs money / needs a card or paid subscription (Databento,
@@ -39,6 +44,7 @@ class SourcePolicy(StrEnum):
 
     PAID_BLOCKED = "paid_blocked"
     FREE_NO_AUTH = "free_no_auth"
+    FREE_AUTH = "free_auth"
     LOCAL_ONLY = "local_only"
     UNKNOWN_BLOCKED = "unknown_blocked"
 
@@ -49,7 +55,9 @@ class SourcePolicy(StrEnum):
 #: cross-checked against this, never trusted over it.
 DEFAULT_REGISTRY: dict[str, SourcePolicy] = {
     "gdelt": SourcePolicy.FREE_NO_AUTH,
+    "gdelt_gkg": SourcePolicy.FREE_NO_AUTH,  # bulk GKG 15-min file archive (no key)
     "sec_edgar": SourcePolicy.FREE_NO_AUTH,
+    "fred": SourcePolicy.FREE_AUTH,  # free, but needs a free FRED API key (no card)
     "finbert_local": SourcePolicy.LOCAL_ONLY,
     "finnhub": SourcePolicy.PAID_BLOCKED,
     "databento": SourcePolicy.PAID_BLOCKED,
@@ -73,11 +81,11 @@ def classify(source: str, registry: dict[str, SourcePolicy] | None = None) -> So
 def requires_network(source: str, registry: dict[str, SourcePolicy] | None = None) -> bool:
     """Whether reaching ``source`` for fresh data inherently involves the network.
 
-    Only ``FREE_NO_AUTH`` sources fetch over the network in this system. Local-only
-    sources never do; paid/unknown sources are blocked outright and so are treated
-    as not network-eligible here.
+    Only ``FREE_NO_AUTH`` and ``FREE_AUTH`` sources fetch over the network in this
+    system. Local-only sources never do; paid/unknown sources are blocked outright and
+    so are treated as not network-eligible here.
     """
-    return classify(source, registry) is SourcePolicy.FREE_NO_AUTH
+    return classify(source, registry) in (SourcePolicy.FREE_NO_AUTH, SourcePolicy.FREE_AUTH)
 
 
 def assert_network_allowed(
@@ -96,13 +104,15 @@ def assert_network_allowed(
     """
     policy = classify(source, registry)
     name = _normalise(source)
-    if policy is SourcePolicy.FREE_NO_AUTH:
+    if policy in (SourcePolicy.FREE_NO_AUTH, SourcePolicy.FREE_AUTH):
         if not allow_network:
             raise ExternalAccessNotAuthorized(
                 f"REFUSED: network fetch from free source '{name}' is blocked by default. "
                 f"Re-run with an explicit --allow-network (allow_network=True) to permit a "
                 f"single bounded fetch. Default behaviour is offline/fixture-only."
             )
+        # FREE_AUTH additionally needs a key, but that is the caller's responsibility
+        # (this module knows nothing about secrets). The network gate itself is identical.
         return
     if policy is SourcePolicy.LOCAL_ONLY:
         raise ExternalAccessNotAuthorized(

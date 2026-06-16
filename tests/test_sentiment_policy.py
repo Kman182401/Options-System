@@ -53,6 +53,27 @@ def test_local_only_never_needs_network():
     assert assert_source_usable("finbert_local") is SourcePolicy.LOCAL_ONLY
 
 
+def test_gkg_bulk_is_free_no_auth():
+    assert classify("gdelt_gkg") is SourcePolicy.FREE_NO_AUTH
+    with pytest.raises(ExternalAccessNotAuthorized):
+        assert_network_allowed("gdelt_gkg", allow_network=False)
+    assert_network_allowed("gdelt_gkg", allow_network=True)  # explicit opt-in only
+    assert requires_network("gdelt_gkg") is True
+    assert assert_source_usable("gdelt_gkg") is SourcePolicy.FREE_NO_AUTH
+
+
+def test_fred_is_free_auth_and_gated_like_free():
+    assert classify("fred") is SourcePolicy.FREE_AUTH
+    # FREE_AUTH is network-eligible and still requires the explicit opt-in.
+    assert requires_network("fred") is True
+    with pytest.raises(ExternalAccessNotAuthorized):
+        assert_network_allowed("fred", allow_network=False)
+    assert_network_allowed("fred", allow_network=True)  # key check is the caller's job
+    # Usable for offline work (a free, vetted source).
+    assert assert_source_usable("fred") is SourcePolicy.FREE_AUTH
+
+
 def test_case_insensitive():
     assert classify("  GDELT ") is SourcePolicy.FREE_NO_AUTH
     assert classify("Databento") is SourcePolicy.PAID_BLOCKED
+    assert classify(" Fred ") is SourcePolicy.FREE_AUTH

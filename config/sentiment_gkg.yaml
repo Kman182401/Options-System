@@ -1,0 +1,50 @@
+# GDELT GKG bulk-archive ingestion (System A — multi-year news tone backfill).
+#
+# Separate from config/sentiment.yaml on purpose: GKG is a DIFFERENT source
+# (`gdelt_gkg`) written to its OWN lake datasets, carrying GDELT's precomputed
+# per-article tone (V2Tone) as a native score — it never touches the FinBERT `s2`
+# pipeline. This file configures the bulk downloader + the row filter only.
+
+# Raw event-schema stamp for GKG rows (the g-series; independent of the s-series
+# used by the DOC/FinBERT path).
+gkg_event_version: g1
+
+# GDELT's precomputed tone is the "model"; stored in the scored lake under this name
+# so it is idempotent-distinct from any FinBERT score and never collides.
+tone_model_name: gdelt_v2tone
+
+# The stable topic label stamped on every GKG event (GKG has no per-query topic).
+query_topic: gkg_markets
+
+# Full backfill window (the CLI --start/--end override this, e.g. for a probe).
+# GDELT 2.0 GKG begins 2015-02-18; we align to the price history (2019->present).
+window:
+  start: 2019-01-01
+  end: 2026-06-16
+
+# A GKG row is KEPT only if any of its V1Themes tokens starts with one of these
+# prefixes (case-insensitive). This is the standard GDELT economics/markets filter;
+# it cuts ~110k articles/day down to the market-relevant slice (~few GB stored vs
+# ~1 TB transferred). Broaden here, never in code.
+theme_prefixes:
+  - ECON_
+  - EPU_
+
+storage:
+  raw_dataset: sentiment_gkg_raw
+  scored_dataset: sentiment_gkg_scores
+
+# Declarative mirror of the authoritative code registry (cross-checked on load — the
+# YAML can never widen access beyond external_data_policy.DEFAULT_REGISTRY).
+source_policy:
+  gdelt_gkg: free_no_auth
+
+# Bulk downloader caps + pacing. All caps are fail-closed safety nets (the run is
+# resumable, so they bound a single invocation, not the whole backfill).
+backfill:
+  max_files: 300000            # ~245k 15-min files over 2019->2026, with headroom
+  max_wall_clock_minutes: 6000 # ~100h ceiling per invocation (resume to continue)
+  max_bytes: 1500000000000     # ~1.5 TB transfer ceiling per invocation
+  workers: 4                   # concurrent downloads (I/O-bound; parse/write stay serial)
+  politeness_delay_s: 0.05     # small spacing so we are a courteous bulk client
+  retry_max: 4                 # bounded retries per file before recording it failed
