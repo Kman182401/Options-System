@@ -1,0 +1,52 @@
+# Daily market-state series (System B) — VIX/VXN + cross-asset, all free from FRED.
+#
+# These are continuous DAILY time series (FRED output_type=1, the final EOD value),
+# distinct from the macro layer's first-print release EVENTS. Used as leak-safe
+# cross-asset features (x1), especially for the day-ahead volatility lead.
+
+marketdata_feature_version: x1
+
+# Lead-in before the 2019 price history so the earliest bars already have context.
+observation_start: 2018-06-01
+
+# FRED series to ingest. `label` is the stable, human token used in feature column
+# names; `group` is for documentation/breakdowns. All verified live against FRED.
+series:
+  - id: VIXCLS          # CBOE Volatility Index (S&P 500 -> MES)
+    label: vix
+    group: volatility
+  - id: VXNCLS          # CBOE Nasdaq-100 Volatility Index (-> MNQ)
+    label: vxn
+    group: volatility
+  - id: DGS3MO          # 3-month Treasury constant maturity yield
+    label: ust_3m
+    group: rates
+  - id: DGS2            # 2-year Treasury yield
+    label: ust_2y
+    group: rates
+  - id: DGS10           # 10-year Treasury yield
+    label: ust_10y
+    group: rates
+  - id: DCOILWTICO      # WTI crude oil spot
+    label: wti
+    group: commodities
+  - id: DTWEXBGS        # Broad trade-weighted US dollar index
+    label: usd_broad
+    group: fx
+  - id: BAMLH0A0HYM2    # ICE BofA US High-Yield option-adjusted spread (credit risk)
+    label: hy_oas
+    group: credit
+
+storage:
+  dataset: market_daily
+
+features:
+  change_horizons_days: [1, 5, 20]   # level - level_k_trading_days_ago
+  zscore_window_days: 60             # trailing standardization window
+  curve_pairs:                       # term-structure spreads (long_label - short_label)
+    - [ust_10y, ust_2y]
+    - [ust_10y, ust_3m]
+
+# Declarative mirror of the authoritative code registry (cross-checked on load).
+source_policy:
+  fred: free_auth
