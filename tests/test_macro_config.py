@@ -14,13 +14,15 @@ from options_system.macro.config import _DEFAULT_PATH, MacroConfig
 def test_loads_and_has_expected_shape():
     cfg = MacroConfig.load()
     assert cfg.macro_version
-    assert (
-        len(cfg.events) >= 8
-    )  # CPI, core CPI, PCE, core PCE, NFP, unrate, claims, GDP, retail, PPI
+    # 10 core releases + 8 v2 second-tier additions (indpro..newhome).
+    assert len(cfg.events) >= 8
     # FOMC: 8 scheduled meetings/year over 2019-2026 (plus tentative future dates).
     assert len(cfg.fomc.decision_dates) >= 56
     assert cfg.fomc.release_et == time(14, 0)  # statement at 14:00 ET
-    assert all(spec.release_et == time(8, 30) for spec in cfg.events.values())  # data at 08:30 ET
+    # Core HIGH-IMPACT data releases are at 08:30 ET; second-tier additions carry their
+    # own standard clocks (09:15 industrial production, 10:00 sentiment/JOLTS/home sales).
+    assert all(s.release_et == time(8, 30) for s in cfg.events.values() if s.high_impact)
+    assert {s.release_et for s in cfg.events.values()} <= {time(8, 30), time(9, 15), time(10, 0)}
 
 
 def test_event_types_include_fomc_and_high_impact_subset():

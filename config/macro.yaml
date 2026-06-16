@@ -15,7 +15,7 @@
 # Bump `macro_version` if a change would alter ingested event rows, and
 # `features.macro_feature_version` if it would alter emitted feature values.
 
-macro_version: "v1"
+macro_version: "v2"  # v2: added 2nd-tier release series (indpro..newhome) as data rows
 
 # Release clock is US Eastern; combined with the first-print release DATE to form
 # the UTC event_time. US data releases are at 08:30 ET; FOMC statement at 14:00 ET.
@@ -38,6 +38,20 @@ events:
   gdp:      {series_id: GDPC1,    release_et: "08:30", label: "Real GDP, advance (SAAR)",          high_impact: true}
   retail:   {series_id: RSAFS,    release_et: "08:30", label: "Advance retail sales (SA)",         high_impact: true}
   ppi:      {series_id: PPIFIS,   release_et: "08:30", label: "PPI final demand (SA)",             high_impact: false}
+  # --- v2 additions: second-tier releases, all first-print verified on FRED ----
+  # Added as available event ROWS only (high_impact: false, and intentionally NOT
+  # wired into any features.* list below), so they enrich the macro data WITHOUT
+  # changing any existing macro feature value — the settled Phase-6 feature layer
+  # (macro_feature_version v1) is preserved byte-for-byte. Wiring them into a future
+  # feature version is a separate, deliberate step.
+  indpro:   {series_id: INDPRO,   release_et: "09:15", label: "Industrial production (SA)",        high_impact: false}
+  houst:    {series_id: HOUST,    release_et: "08:30", label: "Housing starts (SAAR)",             high_impact: false}
+  permit:   {series_id: PERMIT,   release_et: "08:30", label: "Building permits (SAAR)",           high_impact: false}
+  durables: {series_id: DGORDER,  release_et: "08:30", label: "Durable goods orders (SA)",         high_impact: false}
+  income:   {series_id: PI,       release_et: "08:30", label: "Personal income (SA)",              high_impact: false}
+  umcsent:  {series_id: UMCSENT,  release_et: "10:00", label: "U. Michigan consumer sentiment",    high_impact: false}
+  jolts:    {series_id: JTSJOL,   release_et: "10:00", label: "JOLTS job openings (SA)",           high_impact: false}
+  newhome:  {series_id: HSN1F,    release_et: "10:00", label: "New single-family home sales (SAAR)", high_impact: false}
 
 # FOMC scheduled meetings. The rate DECISION is announced when the statement is
 # released at 14:00 ET on the second (decision) day. The schedule is published far
