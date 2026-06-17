@@ -135,11 +135,17 @@ def build_gkg_features_for_times(
         return pl.DataFrame(schema=out_schema)
 
     obs, tone, pos = _arrays(_normalize(scored_frame))
+    # Publication-lag leak guard: a GKG file is downloadable only ~lag minutes after its
+    # DATE, so at decision t we may only use rows whose file had published by t — i.e.
+    # rows with DATE <= t - lag. Shifting the as-of cutoff back by the lag enforces this
+    # without altering the stored observed_at (which correctly records GDELT first-seen).
+    lag_us = cfg.aggregation.publication_lag_minutes * _US_PER_MINUTE
     cols: dict[str, list[float | int | None]] = {n: [] for n in names}
     windows = list(cfg.aggregation.windows.items())
     for ti in t_us.tolist():
+        t_eff = int(ti) - lag_us
         for wname, minutes in windows:
-            agg = _aggregate(obs, tone, pos, int(ti), minutes * _US_PER_MINUTE)
+            agg = _aggregate(obs, tone, pos, t_eff, minutes * _US_PER_MINUTE)
             for field in _FIELDS:
                 cols[f"{prefix}_{wname}_{field}"].append(agg[field])
 

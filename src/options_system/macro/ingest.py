@@ -48,6 +48,7 @@ import polars as pl
 
 from config.settings import Settings
 
+from ..common.external_data_policy import ExternalAccessNotAuthorized, assert_network_allowed
 from ..common.logging import get_logger
 from ..data.store import DuckStore
 from .config import MacroConfig
@@ -367,11 +368,19 @@ def read_macro_events(
 # --------------------------------------------------------------------------- #
 # Top-level ingest (key-gated)
 # --------------------------------------------------------------------------- #
-def ingest(cfg: MacroConfig | None = None, settings: Settings | None = None) -> dict[str, int]:
-    """Ingest the macro-event calendar to the lake. Key-gated; returns rows written per type.
+def ingest(
+    cfg: MacroConfig | None = None,
+    settings: Settings | None = None,
+    *,
+    allow_network: bool = False,
+) -> dict[str, int]:
+    """Ingest the macro-event calendar to the lake. Returns rows written per type.
 
-    With ``OPTIONS_FRED_API_KEY`` unset this **no-ops** with a clear message and
-    returns ``{}`` — the rest of the system is unaffected.
+    Two gates, both fail-closed: with ``OPTIONS_FRED_API_KEY`` unset this **no-ops** and
+    returns ``{}`` (no network is attempted, so there is nothing to authorize); with the
+    key set, the actual FRED fetch additionally requires the ``fred`` FREE_AUTH policy AND
+    an explicit ``allow_network=True`` (surfaced as ``--allow-network``) — otherwise it
+    raises :class:`ExternalAccessNotAuthorized`.
     """
     cfg = cfg or MacroConfig.load()
     settings = settings or Settings()
@@ -382,6 +391,7 @@ def ingest(cfg: MacroConfig | None = None, settings: Settings | None = None) -> 
             "and set OPTIONS_FRED_API_KEY (env/.env) or bridge it from `pass`."
         )
         return {}
+    assert_network_allowed("fred", allow_network=allow_network)  # fail-closed network gate
     api_key = settings.fred_api_key.get_secret_value()
     frame = build_events(cfg, api_key)
     written = write_macro_events(frame)
@@ -399,11 +409,16 @@ def ingest(cfg: MacroConfig | None = None, settings: Settings | None = None) -> 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="macro.ingest", description=__doc__)
     p.add_argument("--show", action="store_true", help="print a sample of ingested events and exit")
+    p.add_argument("--allow-network", action="store_true", help="REQUIRED for any real FRED fetch")
     args = p.parse_args(argv)
 
     cfg = MacroConfig.load()
     print(f"macro_version={cfg.macro_version} events={list(cfg.events)} + fomc")
-    result = ingest(cfg)
+    try:
+        result = ingest(cfg, allow_network=args.allow_network)
+    except ExternalAccessNotAuthorized as exc:
+        print(f"BLOCKED: {exc}")
+        return 2
     if not result:
         print("  (no FRED key — nothing ingested)")
         return 0

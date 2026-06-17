@@ -52,6 +52,22 @@ def test_window_aggregation_and_leakage():
     assert feats["gkgtone_d1_pos_share"][0] == pytest.approx(0.075)
 
 
+def test_publication_lag_excludes_not_yet_published_rows():
+    cfg = GkgConfig.load()
+    lag = cfg.aggregation.publication_lag_minutes
+    assert lag > 0  # the guard is active
+    from datetime import timedelta
+
+    # A row stamped exactly at t0 is NOT knowable until t0 + lag, so it must be excluded
+    # from a feature at t0; the same row IS included once the decision is lag minutes later.
+    t0 = datetime(2024, 1, 2, 12, 0, tzinfo=UTC)
+    frame = _scored([(t0, 0.4, 0.1)])
+    at_t0 = build_gkg_features_for_times(frame, [t0], cfg)
+    assert at_t0["gkgtone_d1_count"][0] == 0  # not yet published
+    after_lag = build_gkg_features_for_times(frame, [t0 + timedelta(minutes=lag)], cfg)
+    assert after_lag["gkgtone_d1_count"][0] == 1  # now knowable
+
+
 def test_empty_window_is_zero_count_null_mean():
     cfg = GkgConfig.load()
     frame = _scored([(datetime(2024, 1, 2, 0, 0, tzinfo=UTC), 0.1, 0.05)])

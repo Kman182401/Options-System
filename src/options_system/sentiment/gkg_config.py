@@ -68,6 +68,12 @@ class Aggregation(_Base):
     feature_version: str
     column_prefix: str
     windows: dict[str, int]
+    # A GKG 15-minute file becomes downloadable a few minutes AFTER its nominal timestamp
+    # (GDELT processing latency). An event's stored observed_at is its file DATE (GDELT
+    # first-seen, a true fact); to be leak-safe we treat it as KNOWABLE only at
+    # DATE + this lag, applied at feature-build time. So a feature for decision t excludes
+    # any row whose file had not yet published by t. Conservative default = one slot.
+    publication_lag_minutes: int = Field(default=15, ge=0)
 
     @field_validator("windows")
     @classmethod

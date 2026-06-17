@@ -14,6 +14,7 @@ import pytest
 from options_system.sentiment import gkg_backfill as gb
 from options_system.sentiment.gkg_backfill import (
     FAILED,
+    MISSING,
     OK,
     Counters,
     GkgBackfillRunner,
@@ -183,13 +184,20 @@ def test_failed_file_retried_on_resume(tmp_path):
     assert lake.read_scored().height == 1
 
 
-def test_max_files_cap_stops_cleanly(tmp_path):
+def test_max_files_cap_is_exact_no_overdownload(tmp_path):
     plan = build_file_plan(date(2024, 1, 1), date(2024, 1, 1))[:4]
     bodies = {gb.file_url(ts): (200, _zip_bytes(_gkg_text(ts))) for ts in plan}
-    runner, _, man = _runner(tmp_path, lambda u: bodies[u], max_files=2)
+    calls = {"n": 0}
+
+    def fetch(u):
+        calls["n"] += 1
+        return bodies[u]
+
+    runner, _, man = _runner(tmp_path, fetch, max_files=2)
     outcome = runner.run(plan)
     assert outcome == "capped_max_files"
     assert runner.counters.files_attempted == 2
+    assert calls["n"] == 2  # the cap is EXACT: the chunk never prefetches beyond max_files
     assert man.summarize()["files_attempted"] == 2
 
 
@@ -204,6 +212,59 @@ def test_corrupt_zip_recorded_failed(tmp_path):
     assert runner.counters.files_failed == 1
     assert man.data["files"][file_timestamp(plan[0])]["status"] == FAILED
     assert lake.read_scored().height == 0
+
+
+def test_resume_refuses_incompatible_manifest(tmp_path, monkeypatch):
+    # A manifest built with different theme_prefixes than the current config must NOT be
+    # resumed (it would skip files processed under the old config). Fail closed, exit 2.
+    mpath = tmp_path / "manifest.json"
+    monkeypatch.setattr(gb, "default_manifest_path", lambda: mpath)
+    man = GkgManifest.load_or_create(
+        mpath,
+        meta={"theme_prefixes": ["SPORTS_"], "start": "2019-01-01", "end": "2019-01-01"},
+    )
+    man.record("20190101000000", status=OK)
+    man.save()
+    args = gb.build_arg_parser().parse_args(
+        ["--resume", "--allow-network", "--start", "2019-01-01", "--end", "2019-01-01"]
+    )
+    assert gb.run(args) == 2  # blocked: config theme_prefixes (ECON_/EPU_) != manifest's
+
+
+def test_resume_accepts_matching_manifest(tmp_path, monkeypatch):
+    # The same config resumes cleanly (no false trip). Uses an injected no-network fetcher
+    # via monkeypatching the runner factory's fetch is overkill; instead seed a fully-done
+    # manifest so run() does no fetching and completes.
+    from options_system.sentiment.gkg_config import GkgConfig
+
+    cfg = GkgConfig.load()
+    mpath = tmp_path / "manifest.json"
+    monkeypatch.setattr(gb, "default_manifest_path", lambda: mpath)
+    GkgManifest.load_or_create(
+        mpath,
+        meta={
+            "theme_prefixes": list(cfg.theme_prefixes),
+            "start": "2019-01-01",
+            "end": "2019-01-01",
+            "gkg_event_version": cfg.gkg_event_version,
+            "tone_model_name": cfg.tone_model_name,
+        },
+    ).save()
+    # Single-day plan with every file already "done" so no network is needed.
+    plan = build_file_plan(date(2019, 1, 1), date(2019, 1, 1))
+    man = GkgManifest.load_or_create(mpath, meta={})
+    for ts in plan:
+        man.record(file_timestamp(ts), status=MISSING)
+    man.save()
+    args = gb.build_arg_parser().parse_args(
+        ["--resume", "--allow-network", "--start", "2019-01-01", "--end", "2019-01-01"]
+    )
+
+    def _boom(*a, **k):
+        raise AssertionError("should not fetch — all files are already done")
+
+    monkeypatch.setattr(gb, "default_fetcher", _boom)
+    assert gb.run(args) == 0  # matching fingerprint resumes, nothing to fetch
 
 
 def test_manifest_atomic_save_roundtrip(tmp_path):

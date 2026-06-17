@@ -353,12 +353,20 @@ class GkgBackfillRunner:
         chunk_size = max(1, self.workers * 4)
         done = 0
         total = len(pending)
+        idx = 0
         try:
-            for i in range(0, total, chunk_size):
+            while idx < total:
                 self._check_caps()
+                # Bound the chunk to the remaining FILE budget so concurrent prefetch can
+                # never download beyond max_files (the cap is exact, not chunk-granular).
+                remaining = self.max_files - self.counters.files_attempted
+                this_chunk = min(chunk_size, remaining, total - idx)
+                if this_chunk <= 0:
+                    raise _CapReached("max_files")
                 if self.politeness_delay_s > 0:
                     self.sleep(self.politeness_delay_s)
-                chunk = pending[i : i + chunk_size]
+                chunk = pending[idx : idx + this_chunk]
+                idx += this_chunk
                 results = self._download_chunk(chunk)
                 for res in results:
                     self._process(res)
@@ -392,6 +400,22 @@ class GkgBackfillRunner:
 
 def default_manifest_path() -> Path:
     return Settings().data_dir / "sentiment_gkg" / "manifest.json"
+
+
+def _current_fingerprint(cfg: GkgConfig, start: date, end: date) -> dict[str, Any]:
+    """The config/run identity stamped in the manifest. ``--resume`` refuses a manifest
+    whose stored fingerprint disagrees, so a window/theme/version change can never quietly
+    skip files that were processed under a different configuration."""
+    return {
+        "start": str(start),
+        "end": str(end),
+        "gkg_event_version": cfg.gkg_event_version,
+        "tone_model_name": cfg.tone_model_name,
+        "theme_prefixes": list(cfg.theme_prefixes),
+        "query_topic": cfg.query_topic,
+        "raw_dataset": cfg.storage.raw_dataset,
+        "scored_dataset": cfg.storage.scored_dataset,
+    }
 
 
 def _make_runner(cfg: GkgConfig, *, workers: int, manifest: GkgManifest) -> GkgBackfillRunner:
@@ -464,22 +488,35 @@ def run(args: argparse.Namespace) -> int:
 
     now = datetime.now(UTC)
     manifest_path = default_manifest_path()
-    if manifest_path.exists() and not (args.resume or args.probe):
+    existed = manifest_path.exists()
+    if existed and not (args.resume or args.probe):
         print(
             f"BLOCKED: manifest already exists at {manifest_path}. Pass --resume to continue "
             f"(ok/missing files are skipped) or move it aside to start fresh."
         )
         return 2
+    fingerprint = _current_fingerprint(cfg, start, end)
+    if existed and args.resume and not args.probe:
+        try:
+            stored = json.loads(manifest_path.read_text(encoding="utf-8")).get("meta", {})
+        except (OSError, json.JSONDecodeError):
+            stored = {}
+        # Compare only fields present in the stored meta (older manifests carry a subset),
+        # so a legitimate resume never false-trips while a real config drift is caught.
+        mismatched = {
+            k: {"manifest": stored[k], "current": v}
+            for k, v in fingerprint.items()
+            if k in stored and stored[k] != v
+        }
+        if mismatched:
+            print(
+                f"BLOCKED: --resume manifest at {manifest_path} was built with a different "
+                f"configuration {mismatched}. Move it aside to start a fresh backfill (or restore "
+                f"the matching window/theme/version)."
+            )
+            return 2
     manifest = GkgManifest.load_or_create(
-        manifest_path,
-        meta={
-            "created_at": now.isoformat(),
-            "start": str(start),
-            "end": str(end),
-            "gkg_event_version": cfg.gkg_event_version,
-            "tone_model_name": cfg.tone_model_name,
-            "theme_prefixes": list(cfg.theme_prefixes),
-        },
+        manifest_path, meta={"created_at": now.isoformat(), **fingerprint}
     )
     runner = _make_runner(cfg, workers=max(1, workers), manifest=manifest)
     kind = "probe" if args.probe else "backfill"

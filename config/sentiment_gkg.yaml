@@ -49,6 +49,9 @@ aggregation:
     d1: 1440
     d3: 4320
     d7: 10080
+  # GKG files publish ~minutes after their nominal timestamp; treat a row as knowable only
+  # at DATE + this lag (leak guard, applied at feature-build time). One slot = conservative.
+  publication_lag_minutes: 15
 
 # Bulk downloader caps + pacing. All caps are fail-closed safety nets (the run is
 # resumable, so they bound a single invocation, not the whole backfill).

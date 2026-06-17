@@ -80,5 +80,16 @@ def test_ingest_no_ops_without_key(monkeypatch):
     monkeypatch.delenv("OPTIONS_FRED_API_KEY", raising=False)
     settings = Settings(fred_api_key=None)
     assert settings.fred_api_key is None
-    # cfg is loaded but no network call is made because the key gate returns first.
+    # No key → no-op, no network is attempted (so the network gate is not reached).
     assert mi.ingest(settings=settings) == {}
+
+
+def test_ingest_blocked_with_key_but_no_allow_network(monkeypatch):
+    # With a key SET, a real FRED fetch is fail-closed: it requires --allow-network.
+    import pytest
+
+    from options_system.common.external_data_policy import ExternalAccessNotAuthorized
+
+    settings = Settings(fred_api_key="dummy-key")
+    with pytest.raises(ExternalAccessNotAuthorized):
+        mi.ingest(settings=settings, allow_network=False)
