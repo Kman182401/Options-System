@@ -77,12 +77,13 @@ def check_budget(running_usd: float, chunk_usd: float, cap_usd: float) -> None:
 # --- secret sourcing -------------------------------------------------------- #
 
 
-# pass entries tried in order: the live key first, then a reserved backup slot.
-# The original free key (databento/api_key) ran out of funds and was removed
-# 2026-06-08; api_key_2 is the live one. To roll in the next backup when api_key_2
-# is depleted, just `pass insert databento/api_key_3` — no code change needed (a
-# missing path is skipped).
-_PASS_KEY_PATHS = ("databento/api_key_2", "databento/api_key_3")
+# pass entries tried in order: the restored free-credit key first, then the
+# previously-live key, then a reserved backup slot. databento/api_key was re-added
+# 2026-06-16 with ~$98 of FREE historical credit (a separate account from api_key_2,
+# which carries card-overflow risk past its credit). It is preferred so spend draws
+# on free credit; api_key_2 stays as the fallback. To roll in another backup, just
+# `pass insert databento/api_key_3` — no code change needed (a missing path is skipped).
+_PASS_KEY_PATHS = ("databento/api_key", "databento/api_key_2", "databento/api_key_3")
 
 
 def _get_api_key(settings: Settings) -> str | None:
