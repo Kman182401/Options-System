@@ -72,3 +72,7 @@ features:
   with_price: true # the existing leak-safe price/vol/volume/time/cross-asset blocks (features/)
   with_macro: true # macro-event features (where the macro_events table is ingested)
   with_sentiment: true # s2 sentiment aggregates where covered (nulls kept elsewhere, not imputed)
+  # Phase-22 opt-in blocks. Default OFF so this config still reproduces the frozen Phase-21
+  # run byte-for-byte. Enabling either is a DELIBERATE new experiment (pre-register first).
+  with_marketdata: false # x1 daily VIX/VXN + yield-curve/oil/USD/credit as-of features
+  with_gkg: false # s3 multi-year GKG news-tone daily aggregates (needs the GKG backfill)

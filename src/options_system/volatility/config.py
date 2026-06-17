@@ -146,6 +146,9 @@ class FeaturesCfg(_Base):
     with_price: bool
     with_macro: bool
     with_sentiment: bool
+    # Phase-22 opt-in blocks (default OFF -> the frozen Phase-21 feature set is unchanged):
+    with_marketdata: bool = False  # x1 daily VIX/VXN + cross-asset features
+    with_gkg: bool = False  # s3 multi-year GKG news-tone daily aggregates
 
 
 class VolatilityConfig(_Base):

@@ -62,6 +62,31 @@ class Storage(_Base):
         return self
 
 
+class Aggregation(_Base):
+    """Point-in-time daily tone-aggregation config (s3) — its own isolated feature axis."""
+
+    feature_version: str
+    column_prefix: str
+    windows: dict[str, int]
+
+    @field_validator("windows")
+    @classmethod
+    def _windows_positive(cls, v: dict[str, int]) -> dict[str, int]:
+        if not v:
+            raise ValueError("aggregation.windows must be non-empty")
+        for name, minutes in v.items():
+            if minutes <= 0:
+                raise ValueError(f"aggregation.windows[{name!r}]={minutes} must be > 0 minutes")
+        return v
+
+    @field_validator("feature_version", "column_prefix")
+    @classmethod
+    def _nonblank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must be non-blank")
+        return v
+
+
 class Backfill(_Base):
     """Bounded GKG bulk-download caps + pacing. Every cap is fail-closed: hitting it
     stops the run cleanly with the resumable manifest intact."""
@@ -85,6 +110,7 @@ class GkgConfig(_Base):
     storage: Storage
     source_policy: dict[str, SourcePolicy]
     backfill: Backfill
+    aggregation: Aggregation
 
     SOURCE: ClassVar[str] = "gdelt_gkg"
 

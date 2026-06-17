@@ -39,6 +39,17 @@ storage:
 source_policy:
   gdelt_gkg: free_no_auth
 
+# Point-in-time DAILY tone aggregation (s3). For each target time t, aggregate the GKG
+# tone over the half-open window (t - window, t] on observed_at — same leak-safe rule as
+# the s2 sentiment layer, but a separate, isolated feature axis with its own prefix.
+aggregation:
+  feature_version: s3
+  column_prefix: gkgtone
+  windows:        # window name -> minutes (daily-resolution: 1, 3, 7 days)
+    d1: 1440
+    d3: 4320
+    d7: 10080
+
 # Bulk downloader caps + pacing. All caps are fail-closed safety nets (the run is
 # resumable, so they bound a single invocation, not the whole backfill).
 backfill:

@@ -357,3 +357,39 @@ verdict**: train the `mm1`-style micro model with vs. without the `s2` sentiment
 through the *same* purged-K-fold + CPCV + PBO + deflated-DSR framework, and report an honest
 edge verdict. Still **no strategy / backtest / risk / execution / live trading** until a
 lever clears the bar.
+
+---
+
+## Phase 22 — GKG bulk-archive multi-year tone (the `gdelt_gkg` source / `s3` features)
+
+The DOC 2.0 ArtList path above is officially limited to a **~3-month archive** and is
+rate-limited, which capped real sentiment coverage at ~4.4% of the 2019→2026 window (the
+Phase-21 finding). Phase 22 adds the path that can actually backfill **years**: GDELT's
+**bulk GKG file archive** — one tab-separated file every 15 minutes
+(`http://data.gdeltproject.org/gdeltv2/YYYYMMDDHHMMSS.gkg.csv.zip`), no key, no per-query
+cap, no throttle, back to 2015.
+
+- **Separate source `gdelt_gkg`**, separate lake datasets (`sentiment_gkg_raw` /
+  `sentiment_gkg_scores`), separate config (`config/sentiment_gkg.yaml`). The FinBERT `s2`
+  pipeline is **untouched** — comparability with Phases 19/20 is preserved.
+- **Tone, not FinBERT.** Each GKG row carries GDELT's precomputed V1.5 **tone** (verified
+  field index 15: `tone,positive,negative,...` in percent units), mapped natively to the
+  system's `ScoredNewsEvent` (`model_name="gdelt_v2tone"`, `sentiment_score = tone/100`). No
+  GPU scoring on this path.
+- **Filter.** A row is kept only if any of its V1Themes tokens starts with an economic/market
+  prefix (`ECON_`, `EPU_`) — the standard GDELT finance filter (~56% of articles in a sample).
+- **PIT.** `observed_at = published_at =` the file `DATE` (GDELT first-seen), the same
+  conservative stance the DOC adapter uses.
+- **Scale.** Built for it: a date-partitioned lake (`GkgLake`) with one deterministically-named
+  part per 15-minute file (idempotent by overwrite, no O(n²) partition re-read), a resumable
+  manifest, and a concurrent + hard-capped downloader (`gkg_backfill.py`). Full 2019→2026 ≈
+  261k files / ~1.8 TB transferred / a few-GB filtered store.
+- **`s3` features.** `gkg_features.py` aggregates tone point-in-time over `(t-W, t]` windows
+  (1/3/7-day) — `gkgtone_<window>_{count,has_any,mean_tone,tone_std,pos_share}` — leak-safe,
+  self-contained (no `s2` coupling), `gkg_feature_version = s3`.
+- **Wiring.** `s3` is an **opt-in, default-off** block in the volatility dataset
+  (`features.with_gkg`). Coverage populates as the backfill catches up to the price-history
+  range (vol sessions start 2019-05; the backfill fills chronologically from 2019-01).
+
+**No model, no verdict, no spend.** Companion daily cross-asset layer: `docs/MARKETDATA.md`.
+Tests: `tests/test_sentiment_gkg*.py`.

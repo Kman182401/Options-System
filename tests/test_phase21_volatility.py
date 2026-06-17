@@ -247,6 +247,13 @@ def test_config_holds_pre_registered_knobs():
     assert set(VCFG.symbols) == {"MES", "MNQ"}
 
 
+def test_phase22_optin_blocks_default_off():
+    # The frozen Phase-21 feature set must be reproduced byte-for-byte: the new x1/s3
+    # blocks are opt-in and default OFF, so enabling them is always a deliberate choice.
+    assert VCFG.features.with_marketdata is False
+    assert VCFG.features.with_gkg is False
+
+
 def _xy(seed: int = 0, n: int = 600):
     # n is comfortably above min_child_samples so the heavily-regularized model can split
     # (a ~200-row synthetic fold trips LightGBM's feature pre-filter; real folds are ~1,500).

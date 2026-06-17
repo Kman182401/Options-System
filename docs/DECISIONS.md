@@ -866,3 +866,41 @@ strategy, no paid data (`OPTIONS_DATABENTO_SPEND_OK` stayed unset throughout).
   authorized (forecast skill is not tradeable money). The h = 1 result is a pre-registered-diagnostic
   re-scope pointer (operator decision). Method + numbers: `docs/PHASE21_VOL.md`; verdict table
   updated in `docs/RESEARCH_VERDICTS.md`. New tests: `tests/test_phase21_volatility.py` (17).
+
+---
+
+## Phase 22 — Free data expansion: GKG news, VIX/cross-asset, macro (2026-06-16)
+
+Goal: feed the program's one live lead (the day-ahead volatility forecast) and close the
+sentiment-coverage gap, using only **free, no-new-key, no-new-dependency** sources. Four
+systems; **data + features + opt-in wiring only — no model, no verdict, no spend.**
+
+- **Source-source-of-truth gate.** Added a `FREE_AUTH` policy class (free but key-gated, e.g.
+  FRED) to `external_data_policy`; registered `gdelt_gkg` (FREE_NO_AUTH) and `fred` (FREE_AUTH).
+  Fail-closed semantics unchanged: an explicit `--allow-network` is still required; unknown
+  sources still fail closed. *Why:* one authoritative registry every new source must pass.
+- **System A — GKG bulk news (`gdelt_gkg`, `s3`).** The DOC ArtList path is ~3-month-archive +
+  rate-limited (coverage stalled at 4.4%); the bulk 15-minute GKG file archive backfills years
+  with no key/cap/throttle. Keep GDELT's precomputed **tone** as a native score (no FinBERT).
+  Separate lake (`sentiment_gkg_*`, date-partitioned, idempotent-by-overwrite — built for ~190M
+  rows / ~260k files without an O(n²) re-read) so the FinBERT `s2` path is untouched. Resumable,
+  concurrent, hard-capped downloader. *Stooq was dropped* — as of 2026 it serves a JS anti-bot
+  wall, not CSV. Full 2019→2026 backfill launched detached (~1.8 TB / ~a day).
+- **System B — daily market-state (`market_daily`, `x1`).** VIX/VXN + curve/oil/USD/credit from
+  FRED (output_type=1, EOD, not revised → first-print). Long-format idempotent lake; PIT stamp =
+  END of the observation day (lag-by-one, can't look ahead). `x1` as-of features
+  (level/change/z-score/curve-spreads). Live ingest: 14,892 rows, current to 2026-06-15.
+- **System C — macro expansion (`macro_version` v1→v2).** Added 8 second-tier FRED releases
+  (industrial production, housing, permits, durables, personal income, U-Mich sentiment, JOLTS,
+  new-home sales) as `high_impact:false` event rows **not wired into any feature list** — so the
+  settled Phase-6 macro feature layer (`macro_feature_version` v1) is preserved byte-for-byte.
+- **System D — make it usable, no verdict.** `s3` GKG tone aggregator (`gkgtone_*`, leak-safe,
+  self-contained) + `x1`/`s3` wired into the volatility dataset as **opt-in, default-off** blocks
+  (`features.with_marketdata` / `features.with_gkg`). Verified: default-off reproduces the frozen
+  Phase-21 set byte-for-byte (155 treat features); on adds +57 (marketdata 42 + gkg 15) and is
+  leak-safe. *Enabling either for a real forecast is a separate, pre-registered phase.*
+- **Files:** `common/external_data_policy.py`; `sentiment/gkg*.py` + `config/sentiment_gkg.yaml`;
+  `marketdata/*` + `config/marketdata.yaml`; `config/macro.yaml`; `volatility/dataset.py`+`run.py`+
+  `config.py`. Docs: `docs/MARKETDATA.md` (new), `docs/SENTIMENT.md` (GKG section). ~95 new offline
+  tests. **No new API keys or pip dependencies.** Databento remains the explicit follow-on unit
+  (fail-closed guard intact, untouched here).

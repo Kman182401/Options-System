@@ -36,12 +36,17 @@ from ..features.macro_features import compute_macro_features, macro_feature_name
 from ..macro.config import MacroConfig
 from ..macro.ingest import partition_glob as macro_partition_glob
 from ..macro.ingest import read_macro_events
+from ..marketdata.config import MarketDataConfig
+from ..marketdata.features import attach_market_asof, market_feature_names
+from ..marketdata.lake import MarketDailyLake
 from ..sentiment.config import SentimentConfig
 from ..sentiment.features import (
     attach_sentiment_asof,
     read_sentiment_scores,
     sentiment_feature_names,
 )
+from ..sentiment.gkg_config import GkgConfig
+from ..sentiment.gkg_features import attach_gkg_asof, gkg_feature_names, read_gkg_scores
 from .config import VolatilityConfig
 from .realized import daily_realized_variance, forward_log_rv, har_predictors
 
@@ -211,6 +216,41 @@ def build_daily_base(
             if has_any_col is not None and base.height:
                 flags = base[has_any_col].fill_null(0).to_numpy().astype(float)
                 sentiment_coverage = float(flags.mean()) if flags.size else 0.0
+
+        # --- Phase-22 opt-in blocks (default OFF; the frozen Phase-21 set is unchanged) ---
+        if vcfg.features.with_marketdata:
+            mdcfg = MarketDataConfig.load()
+            market_frame = MarketDailyLake(dataset=mdcfg.storage.dataset).read()
+            if market_frame.is_empty():
+                raise ValueError(
+                    f"[{symbol}] with_marketdata=True but the market_daily lake is empty — "
+                    "ingest it first:\n  OPTIONS_FRED_API_KEY=... uv run python -m "
+                    "options_system.marketdata.ingest --allow-network"
+                )
+            mkt_cols = market_feature_names(mdcfg)
+            attached = attach_market_asof(
+                base.select("t_close"), market_frame, mdcfg, time_col="t_close"
+            )
+            base = base.hstack(attached.drop("t_close"))
+            treat_cols += mkt_cols
+            feature_blocks["marketdata"] = len(mkt_cols)
+
+        if vcfg.features.with_gkg:
+            gkgcfg = GkgConfig.load()
+            gkg_scored = read_gkg_scores()
+            if gkg_scored.is_empty():
+                raise ValueError(
+                    f"[{symbol}] with_gkg=True but the GKG scored lake is empty — run the GKG "
+                    "backfill first:\n  uv run python -m options_system.sentiment.gkg_backfill "
+                    "--allow-network"
+                )
+            gkg_cols = gkg_feature_names(gkgcfg)
+            attached = attach_gkg_asof(
+                base.select("t_close"), gkg_scored, gkgcfg, time_col="t_close"
+            )
+            base = base.hstack(attached.drop("t_close"))
+            treat_cols += gkg_cols
+            feature_blocks["gkg"] = len(gkg_cols)
 
         logger.info(
             f"[{symbol}] daily base: {base.height} sessions "

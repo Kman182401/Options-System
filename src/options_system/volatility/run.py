@@ -259,10 +259,15 @@ def treatment_shap(mtm: VolatilityMatrix, vcfg: VolatilityConfig) -> dict[str, A
 
         har_share = _block((), exact=tuple(mtm.har_cols))
         sent_share = _block(("sent_",))
+        mkt_share = _block(("mkt_",))  # Phase-22 x1 cross-asset block (0 when off)
+        gkg_share = _block(("gkgtone_",))  # Phase-22 s3 GKG-tone block (0 when off)
+        accounted = har_share + sent_share + mkt_share + gkg_share
         block_shares = {
             "har": har_share,
             "sentiment": sent_share,
-            "other": round(max(0.0, 1.0 - har_share - sent_share), 4),
+            "marketdata": mkt_share,
+            "gkg": gkg_share,
+            "other": round(max(0.0, 1.0 - accounted), 4),
         }
         return {
             "available": True,
