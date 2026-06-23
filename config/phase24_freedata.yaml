@@ -1,0 +1,61 @@
+# Phase 24 — free-data incremental-value study (frozen knobs).
+#
+# Frozen contract: docs/PHASE24_PREREGISTRATION.md. Committed BEFORE any modeling.
+# The MODELING CORE (RV estimator, fixed LightGBM, h=1, walk-forward, regime, DM) is NOT restated
+# here — it is inherited verbatim from config/phase23_vol_h1.yaml (volatility_version vf2) so the
+# Phase-24 baseline IS the confirmed Phase-23 model, with zero risk of drift. This file holds only
+# the Phase-24-specific knobs. Do NOT tune any value after seeing results (anti-snooping).
+# Forecast-skill verdict only — forecast skill is not tradeable money.
+
+freedata_version: "fd1"
+
+# Inherit the entire modeling core from the frozen Phase-23 contract.
+inherits_core: "config/phase23_vol_h1.yaml"
+
+# The baseline arm = the confirmed Phase-23 feature set (both free-data blocks OFF). Restated for
+# clarity; the loader enforces it against the inherited core.
+baseline_features:
+  with_price: true
+  with_macro: true
+  with_sentiment: true
+  with_marketdata: false
+  with_gkg: false
+
+# Each free-data block is tested as its own additive arm over the baseline. `block` names the
+# feature toggle flipped ON for that arm; `col_prefix` identifies its columns (for coverage + SHAP).
+arms:
+  - key: x1
+    block: marketdata # flips features.with_marketdata = True
+    col_prefix: "mkt_"
+    description: "VIX/VXN + yield-curve/oil/USD/credit daily as-of features (FRED)"
+  - key: s3
+    block: gkg # flips features.with_gkg = True
+    col_prefix: "gkgtone_"
+    description: "Multi-year GKG news-tone daily aggregates"
+
+# Coverage precondition (Phase-18 discipline): an arm runs/gates only if its block covers >= this
+# fraction of OOS decision days; otherwise it is reported coverage-insufficient and DEFERRED.
+coverage:
+  min_oos_fraction: 0.80
+
+# Verdict gates — per arm, per symbol, ALL must clear at h=1 (incremental over the baseline).
+gates:
+  g1_incremental_accuracy:
+    rule: "aug_qlike < baseline_qlike AND one_sided_dm_p < 0.05"
+  g2_regime_robustness:
+    rule: "aug_qlike <= baseline_qlike in BOTH calm and turbulent OOS sub-samples"
+  g3_temporal_stability:
+    n_folds: 18
+    min_folds_beating_baseline: 13 # 13/18 = one-sided 5% binomial sign test
+    rule: "aug beats baseline in >=13/18 walk-forward folds"
+
+decision:
+  pass_per_symbol: "G1 AND G2 AND G3"
+  both_pass: "block adds incremental value -> accepted improvement (volatility_version bump); NOT trading"
+  one_pass: "flagged fragile; not folded in"
+  none_or_deferred: "block does not add value (or deferred on coverage); Phase-23 baseline stands"
+
+artifacts:
+  per_symbol_dir: "data/volatility/runs_fd"
+  verdict_json: "data/volatility/runs_fd/verdict.json"
+  mlflow_experiment: "volatility-freedata-fd1"
