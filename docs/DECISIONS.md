@@ -904,3 +904,50 @@ systems; **data + features + opt-in wiring only — no model, no verdict, no spe
   `config.py`. Docs: `docs/MARKETDATA.md` (new), `docs/SENTIMENT.md` (GKG section). ~95 new offline
   tests. **No new API keys or pip dependencies.** Databento remains the explicit follow-on unit
   (fail-closed guard intact, untouched here).
+
+---
+
+## Phase 23 — 1-day RV-forecast confirmation: the program's first positive verdict (2026-06-23)
+
+Goal: take Phase 21's non-gated h=1 lead (the only benchmark-beating signal in the program) and
+**confirm or kill it under a harder, pre-registered bar** — not a re-run of the cherry-picked
+horizon. Operator decisions: **harden the benchmark** and **confirm first** (existing features only;
+the Phase-22 free-data blocks are a separate Phase 24). Frozen before any modeling:
+`docs/PHASE23_PREREGISTRATION.md` + `config/phase23_vol_h1.yaml` (commit `dc0ac9e`).
+
+- **Why a confirmation, not a re-run.** h=1 was selected after seeing {1,5,22}. A plain re-run would
+  be circular. The defense is new hurdles the diagnostic never faced — a four-benchmark battery and
+  two new gates — chosen to *falsify* a fragile or strawman-driven result. (Multiple-comparisons
+  across the 3 horizons is a non-issue: the p-values survive Bonferroni-3 by orders of magnitude.)
+- **Hardened benchmark battery.** The treatment must beat **all** of {HAR-RV, random-walk,
+  EWMA(λ=0.94), GARCH(1,1)}. GARCH(1,1) is the canonical "does anything beat a GARCH(1,1)?"
+  challenger (Hansen-Lunde 2005), implemented **dependency-free** via `scipy` QMLE (no `arch`/
+  `statsmodels` added — neither installed; scipy is), refit per walk-forward fold with disclosed
+  non-convergence fallbacks (carry-forward → RiskMetrics).
+- **Two new gates.** G3 = beat each challenger with a significant one-sided DM; G4 = beat HAR and RW
+  in ≥13/18 folds (the one-sided 5% binomial sign-test threshold) — defends against a single-period
+  (e.g. 2022) artifact.
+- **GARCH return interval = RTH-internal (adversarial-review correction).** First implementation used
+  *close-to-close* daily returns, which include the overnight gap while the RV target is RTH-only —
+  this mis-scaled (inflated) GARCH's variance, making it artificially easy to beat. Codex
+  adversarial review flagged it; corrected to a **within-session RTH open-to-close** return
+  (`realized.daily_rth_log_return`), matching the RV target's window. This *strengthened* the bar
+  (GARCH QLIKE fell from ~0.45/0.41 to 0.33/0.28, next to HAR) before the verdict was finalized — a
+  legitimate engineering fix under the pre-registration's "engineering reason" clause, not result
+  tuning. Same review also made Phase-23 artifact persistence **all-or-nothing** (write per-symbol
+  JSONs + verdict only after every symbol succeeds), so a mid-run failure can't leave a fresh symbol
+  file beside a stale verdict.
+- **Verdict: CONFIRMED 1-day RV-forecast skill — both symbols, all four gates pass.** OOS 2022→2026,
+  n=1,139/symbol. QLIKE treat 0.246 (MES)/0.224 (MNQ) beats HAR 0.308/0.267 and every challenger;
+  DM p≈0–5e-6 vs each; regime-robust in both calm and turbulent (the gate that killed h=5); beats
+  HAR in 16/18 folds, RW in 18/18; GARCH converged 17–18/18. The core reproduces the Phase-21 h=1
+  diagnostic byte-for-byte. **The strawman worry was disproved** — HAR was the toughest classical
+  benchmark and the model beat it anyway.
+- **What it authorizes.** A *forecast-skill* result only → authorizes **Phase 24** (the free-data
+  incremental study: do `x1`/`s3` improve it?) and, later, an economic-value study. **No strategy /
+  backtest / risk / execution / live trading is authorized; the system stays hard-locked to paper.**
+- **Files:** `volatility/benchmarks.py` (new — RW/EWMA/GARCH), `volatility/config_h1.py` (new),
+  `volatility/run_h1.py` (new — battery + G1–G4 + verdict, reuses the frozen Phase-21 primitives),
+  `volatility/realized.py` (+`daily_rth_log_return`). Docs: `docs/PHASE23_VOL.md`,
+  `docs/PHASE23_PREREGISTRATION.md`; verdict ledger updated. Tests: `tests/test_phase23_vol_h1.py`.
+  Full suite green, ruff + ty clean.

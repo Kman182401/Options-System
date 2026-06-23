@@ -165,3 +165,28 @@ def forward_log_rv(rv: np.ndarray, h: int) -> np.ndarray:
             s = csum[t + h + 1] - csum[t + 1]  # sum rv[t+1 .. t+h]
             out[t] = math.log(s / h)
     return out
+
+
+def daily_rth_log_return(bars: pl.DataFrame, scfg: SessionCfg) -> pl.DataFrame:
+    """Within-session RTH (open-to-close) log return per session → ``(session_date, ret)``.
+
+    ``ret_t = log(last RTH close) − log(first RTH close)`` within session ``t`` — the cumulative
+    intraday RTH move. It is computed on **exactly the RTH window the RV target uses**, so it
+    **excludes the overnight/weekend gap** (a close-to-close return would not, mis-scaling a GARCH
+    benchmark vs the RTH-only RV target). Used **only** by the Phase-23 GARCH(1,1) benchmark
+    (which needs a return series the RV target does not provide). Same RTH sessionization as the RV
+    estimator, so it aligns 1:1 with the daily RV sessions and every session is self-contained
+    (no null first row). Pure (bars in, frame out); no model, no I/O.
+    """
+    rth = _rth(bars, scfg)
+    sess = (
+        rth.group_by(["session_date"], maintain_order=True)
+        .agg(
+            pl.col("close").first().alias("c_open"),
+            pl.col("close").last().alias("c_close"),
+        )
+        .sort("session_date")
+    )
+    return sess.with_columns(
+        (pl.col("c_close").log() - pl.col("c_open").log()).alias("ret")
+    ).select("session_date", "ret")

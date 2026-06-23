@@ -1,14 +1,17 @@
 # Research Verdicts — Options-System
 
-**Status as of Phase 21 (2026-06-13): no promoted model. No strategy, backtest, or
-live trading is authorized.** Six attempts at intraday *direction* (price 5, macro 6,
-TA 10, microstructure 14, sentiment 19, meta-labeling 20) all returned honest nulls
-through the same fixed framework. **Phase 21 pivots to a different question — forecast
-*accuracy* of realized volatility vs the HAR-RV benchmark** (not a directional edge), and
-returns a null at the pre-registered one-week horizon (h = 5) **but a clear, significant
-win at the 1-day horizon (h = 1) on both symbols** — the first time ML beats its benchmark
-on a significance test anywhere in the program. An honest null was always an explicit
-success criterion; a fabricated edge was the one unacceptable outcome.
+**Status as of Phase 23 (2026-06-23): no promoted *tradeable* model, but the program's first
+confirmed forecast skill. No strategy, backtest, or live trading is authorized.** Six attempts at
+intraday *direction* (price 5, macro 6, TA 10, microstructure 14, sentiment 19, meta-labeling 20)
+all returned honest nulls through the same fixed framework. **Phase 21 pivoted to a different
+question — forecast *accuracy* of realized volatility vs the HAR-RV benchmark** (not a directional
+edge), a null at the pre-registered one-week horizon (h = 5) but a significant win at the 1-day
+horizon (h = 1) on both symbols. **Phase 23 then re-asked the h = 1 question under a hardened,
+pre-registered bar — the treatment had to beat HAR-RV *and* a random-walk, an EWMA(λ=0.94) and a
+GARCH(1,1), be regime-robust, and hold across walk-forward folds — and CONFIRMED the skill on both
+symbols (all four gates pass).** That is the program's first positive verdict. It is a *forecast-skill*
+result only: it authorizes a free-data incremental study (Phase 24), never live trading. An honest
+null was always an explicit success criterion; a fabricated edge was the one unacceptable outcome.
 
 This document locks those conclusions so future work does not re-litigate them, and
 records that none of them authorizes building the economic backtest / strategy / risk
@@ -34,6 +37,7 @@ robust across regimes); it is not directly comparable to the directional edge ba
 | **19** | + `s2` sentiment block on the micro-model — opt-in `with_sentiment` A/B (`mm1` OFI-only vs `mm2` = `mm1` + 80 `sent_*` features), supported region only (pre-registered: `docs/PHASE19_PREREGISTRATION.md`) | Per symbol, `t0 ∈ [2026-03-10, 2026-06-06]`; rows ES 1,132 / NQ 1,036, **effective N 735.5 / 696.3** | Treatment fails on both. **ES 1/6** (PBO 0.476→0.734 — a selection overfit: gross DSR 0.84 + CPCV median +0.010 did **not** survive PBO). **NQ 3/6** (gross DSR 0.081, macro F1 0.177, CPCV median −0.034). SHAP led by `sent_1d_topic_rates_mean_score` on both — sentiment was used heavily, with no OOS edge | **No significant edge** (ES + NQ) | **No** |
 | **20** | **Meta-labeling** (different axis): fixed causal primary `sign(ofi_top)`@`t0` + a binary meta-gate over OFI + `s2` + `\|ofi_top\|` deciding *whether to act* (τ=0.5). Arm M (gated) vs B0 (always-act). Five inherited mm1 gates + a disclosed binary **meta-skill** gate (pre-registered: `docs/PHASE20_PREREGISTRATION.md`) | Per symbol, full window `t0 ∈ [2026-01-26, 2026-06-06]`; meta-set ES 1,688 / NQ 1,519, **effective N 1,089.3 / 1,023.1** | Arm M fails on both. **ES 2/6** (gross DSR 0.060, CPCV median −0.010). **NQ 4/6** (PBO 0.722, gross DSR 0.247, mean gross −1.2e-5, CPCV median −0.027). **Meta-skill PASSED both** (acted-hit > always-hit: ES 0.134>0.122, NQ 0.130>0.103; balAcc 0.52/0.57) — the gate *did* add precision, just too little for a deflated edge. SHAP ≈70–75% sentiment | **No significant edge** (ES + NQ) | **No** |
 | **21** | **Volatility forecast** (DIFFERENT bar — accuracy, not direction): 5-min sub-sampled daily RV; fixed LightGBM (HAR predictors + price/vol/macro/`s2` blocks, QLIKE objective, **no search**) vs **HAR-RV** benchmark; anchored expanding walk-forward; gates G1 (QLIKE↓ + DM-significant) & G2 (regime-robust) at h=5 (pre-registered: `docs/PHASE21_PREREGISTRATION.md`) | Per symbol, full `bars_1m` 2019→2026; **OOS 2022→2026 ≈ 1,135 days/symbol** | **h=5 (gated):** treatment marginally *worse* than HAR (MES QLIKE 0.219 vs 0.210, NQ 0.161 vs 0.157; DM not sig., p 0.81/0.76) AND not regime-robust (better in calm, worse in turbulent) → G1✗ G2✗. **h=1 (diagnostic, not gated): treatment BEATS HAR significantly both symbols** (MES p≈0, NQ p=1e-6). SHAP ~75% price/vol, ~25% HAR, ~0% sentiment (4.4% coverage) | **No significant skill** at h=5 (MES + MNQ) | **No** (h=5); h=1 is a noted re-scope pointer |
+| **23** | **Volatility-forecast CONFIRMATION at h=1** (re-scope of the Phase-21 lead): SAME fixed LightGBM + SAME existing features (Phase-22 free-data blocks OFF — "confirm first"), under a **hardened benchmark battery** — must beat HAR-RV **and** random-walk, EWMA(λ=0.94) and **GARCH(1,1)** (dep-free scipy QMLE, refit per fold, RTH-internal returns); gates G1 (vs HAR), G2 (regime), **G3 (beat each challenger, sig. DM)**, **G4 (beat HAR & RW in ≥13/18 WF folds)** (pre-registered: `docs/PHASE23_PREREGISTRATION.md`) | Per symbol, OOS 2022→2026, **n=1,139/symbol; 18 WF folds** | **None — all four gates PASS both symbols.** QLIKE treat 0.246 (MES)/0.224 (MNQ) beats HAR 0.308/0.267, RW 0.760/0.695, EWMA 0.360/0.295, GARCH 0.331/0.285; DM p≈0–5e-6 vs every benchmark; treat beats HAR in 16/18 folds, RW in 18/18; regime-robust | **CONFIRMED 1-day RV-forecast skill** (MES + MNQ) — first positive verdict in the program | **No** (forecast skill ≠ tradeable money; authorizes the **Phase-24 free-data study** only) |
 
 ## Why each null was still useful
 
@@ -104,15 +108,25 @@ robust across regimes); it is not directly comparable to the directional edge ba
   gated horizon ⇒ **no Phase-22 economic-value study is authorized** yet. The h = 1 result is a
   concrete, pre-registered-diagnostic **re-scope pointer** (operator decision, not auto-
   re-litigation). See `docs/PHASE21_VOL.md` + `docs/PHASE21_PREREGISTRATION.md`.
-- **Remaining forks (operator decision, none auto-authorized):** (a) **re-scope the volatility
-  forecast to h = 1**, where Phase 21 shows demonstrable ML accuracy over HAR-RV — the most
-  promising lead in the program, and the natural input to the repo's Phase-2 options work; (b)
-  MBP-10 multi-level order-flow depth — **paid, billing-gated, BLOCKED** until billing is
-  deliberately unfrozen (`docs/BILLING_SAFETY.md`, `src/options_system/common/databento_guard.py`);
-  or (c) a deliberate horizon/regime redesign of the directional labels/target. Seven phases in,
-  **no strategy / economic backtest / risk / execution / live trading is authorized** until a
-  lever clears its pre-registered bar.
+- **The h = 1 re-scope is now CONFIRMED (Phase 23) — the first positive verdict.** The operator took
+  the Phase-21 pointer and ran a pre-registered confirmation under a *harder* bar: the same fixed
+  model and existing features had to beat not just HAR-RV but a random-walk, an EWMA(0.94) and a
+  GARCH(1,1) (RTH-internal, refit per fold), be regime-robust, and win in ≥13/18 walk-forward folds.
+  **Both symbols cleared all four gates** (QLIKE treat 0.246/0.224 vs HAR 0.308/0.267 and every
+  challenger; DM p≈0; 16/18 folds beat HAR; GARCH converged 17–18/18). The earlier strawman worry
+  was disproved — HAR was in fact the *toughest* classical benchmark and the model beat it anyway.
+  This authorizes **only** the Phase-24 free-data incremental study; it remains a forecast-skill
+  result and **authorizes no trading**. See `docs/PHASE23_VOL.md` + `docs/PHASE23_PREREGISTRATION.md`.
+- **Remaining forks (operator decision, none auto-authorized):** (a) **Phase 24 — the pre-registered
+  free-data incremental study**: does turning on the Phase-22 `x1` VIX/cross-asset and `s3` GKG-tone
+  blocks improve the confirmed h = 1 forecast? (the natural next step, and free); (b) an
+  **economic-value study** translating the h = 1 forecast skill into position-sizing / a vol overlay
+  / Phase-2 options pricing, with realistic costs — the bridge from "accuracy" to "money"; (c) MBP-10
+  multi-level order-flow depth — **paid, billing-gated, BLOCKED** until billing is deliberately
+  unfrozen (`docs/BILLING_SAFETY.md`, `src/options_system/common/databento_guard.py`). **No strategy /
+  economic backtest / risk / execution / live trading is authorized** until a lever clears the
+  relevant pre-registered bar (forecast skill alone does not).
 
 Per-phase method docs: `docs/MODEL.md` (5), `docs/MACRO.md` (6), `docs/TA_FEATURES.md`
 (10), `docs/MICRO_MODEL.md` (14), `docs/PHASE19_AB.md` (19), `docs/PHASE20_META.md` (20),
-`docs/PHASE21_VOL.md` (21).
+`docs/PHASE21_VOL.md` (21), `docs/PHASE23_VOL.md` (23).
