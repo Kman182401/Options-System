@@ -1,0 +1,125 @@
+# Phase 25 — Economic-value study of the confirmed 1-day RV forecast (frozen knobs).
+#
+# Frozen contract: docs/PHASE25_PREREGISTRATION.md. Committed BEFORE any P&L is computed.
+# This file is a COMPLETE, self-contained snapshot of every pre-registered economic-overlay
+# knob. The FORECASTING core is inherited VERBATIM from config/phase23_vol_h1.yaml (vf2) —
+# no retraining, no re-tuning, no new forecasts. Do NOT tune any value after seeing results
+# (anti-snooping). This is an OFFLINE / SIMULATED / PAPER economic-value verdict only —
+# it authorizes NO live trading and NO automated paper-execution deployment, regardless of outcome.
+
+econ_version: "ev1"
+inherits_core: "config/phase23_vol_h1.yaml" # vf2 — RV target, fixed LightGBM, walk-forward, regimes
+
+# Canonical verdict defined over EXACTLY these, per symbol, never pooled.
+symbols: [MES, MNQ]
+
+# Framework: constant-volatility targeting (Moreira-Muir 2017 flavor; Fleming-Kirby-Ostdiek
+# economic value of volatility timing). Position w_t = sigma_target / sigma_forecast_t (capped).
+framework: "volatility_targeting_constant_vol"
+
+# --- The arms (consume Phase-23 OOS forecasts VERBATIM; no model is retrained) ---
+arms:
+  treat: "fcast_treat" # confirmed Phase-23 LightGBM (the treatment)
+  har: "fcast_har"
+  rw: "fcast_rw"
+  ewma: "fcast_ewma"
+  garch: "fcast_garch"
+  notiming: "expanding_mean_log_rv" # causal expanding-window mean log-RV (no daily timing)
+
+# --- Overlay / position knobs (FIXED a priori) ---
+overlay:
+  sigma_target_annual: 0.10 # 10% annualized RTH vol budget (not tuned per symbol)
+  ann_factor: 252 # RTH sessions/year; sigma_target_daily = 0.10/sqrt(252) ~= 0.0063
+  w_cap: 2.0 # hard leverage cap (binds in calm markets; identical across arms)
+  w_floor: 0.1 # long-only floor (never flat; no sign/direction decision is ever taken)
+  long_only: true # w >= w_floor > 0 ALWAYS — isolates variance value from any directional bet
+
+# --- Expected-return / drift handling (the directional-bet firewall) ---
+# Fixed, causal, NON-predictive, IDENTICAL across all arms. Default 0 => pure vol-scaled long.
+drift:
+  mode: "zero" # GATED design. drift = 0 for every arm, every day.
+  reported_variant: "mu_train" # per-fold TRAIN-window mean of ret, frozen for OOS; REPORTED not gated
+  forbidden: "any per-day / per-regime / forecast-conditioned expected return (= directional bet)"
+
+# --- Return series for P&L (the RTH-internal alignment fix; Phase-23 GARCH gotcha) ---
+# P&L earns daily_rth_log_return of session t+1 (RTH open-to-close, EXCLUDES overnight gap),
+# on EXACTLY the RTH window the RV target uses — so it scales consistently with sigma_target.
+returns:
+  source: "daily_rth_log_return" # RTH-internal; NOT close-to-close (gap would mis-scale vs RV)
+  holding_period: "RTH session t+1"
+  annualization: 252
+
+# --- Transaction-cost model (FIXED a priori, exact) ---
+# cost_{t+1} = |w_{t+1} - w_t| * c ; c = round_trip_dollar_cost / (multiplier * ref_index_level)
+costs:
+  commission_per_side_usd: 0.50 # IBKR micro futures (within $0.25-0.62 band; fixed mid)
+  commission_round_trip_usd: 1.00
+  spread_round_trip_ticks: 1.0 # typical 1-tick bid-ask, paid round trip
+  per_symbol:
+    MES:
+      multiplier_usd_per_point: 5.0
+      tick_size_points: 0.25
+      tick_value_usd: 1.25
+      spread_round_trip_usd: 1.25
+      round_trip_usd: 2.25 # 1.00 commission + 1.25 spread
+      ref_index_level: "OOS_window_median_RTH_close" # frozen from lake at impl time; ~4500
+      c_baseline_approx_bps: 1.0 # ~2.25/22500 ~= 1.0e-4 of notional per unit turnover
+    MNQ:
+      multiplier_usd_per_point: 2.0
+      tick_size_points: 0.25
+      tick_value_usd: 0.50
+      spread_round_trip_usd: 0.50
+      round_trip_usd: 1.50 # 1.00 commission + 0.50 spread
+      ref_index_level: "OOS_window_median_RTH_close" # frozen from lake at impl time; ~15500
+      c_baseline_approx_bps: 0.48 # ~1.50/31000 ~= 0.48e-4 of notional per unit turnover
+  # Stressed cost multipliers — gates must hold at 1x AND 3x AND 5x.
+  stress_multipliers_gated: [1.0, 3.0, 5.0]
+  optimistic_reported_only: [0.5] # reported, NEVER used to claim a pass
+  ref_notional_mode: "constant_frozen" # daily mark-to-notional is a REPORTED robustness check only
+
+# --- Metrics (FIXED a priori, exact formulas) ---
+metrics:
+  vte: "abs( log( std(w*ret_drift_free_gross) / sigma_target_daily ) )" # PRIMARY, return-FREE
+  vte_per_fold: "same, within each of the 18 walk-forward folds"
+  sharpe: "sqrt(252) * mean(r_net) / std(r_net)" # at each cost level
+  primary_headline: "delta_Sharpe(treat vs notiming) @1c, and VTE_treat/VTE_notiming, per symbol"
+
+# --- Verdict gates: per symbol, ALL must clear at h=1 (FIXED a priori) ---
+gates:
+  g1_vte_vs_notiming_and_benchmarks: # PRIMARY, return-assumption-free
+    rule: "VTE_treat < VTE_notiming AND VTE_treat < VTE_bench for EACH of {har,rw,ewma,garch}"
+  g2_vte_temporal_stability:
+    n_folds: 18
+    min_folds_treat_vte_below_notiming: 13 # 13/18 = one-sided 5% binomial sign test
+    rule: "treat per-fold VTE < notiming per-fold VTE in >= 13/18 folds"
+  g3_net_sharpe_no_harm_under_stress:
+    rule: >-
+      Sharpe_treat >= Sharpe_notiming at ALL of {1c,3c,5c}
+      AND Sharpe_treat >= Sharpe_bench for EACH of {har,rw,ewma,garch} at 1c
+  g4_turnover_cost_sanity:
+    max_cost_drag_frac_of_gross_at_3c: 0.25 # cost drag < 25% of gross return magnitude at 3x
+    max_turnover_ratio_vs_notiming: 2.0 # treat turnover within 2x of no-timing turnover
+    rule: "cost_drag@3c < 0.25*|gross_return| AND turnover_treat <= 2*turnover_notiming"
+
+# --- Decision (per the frozen rule) ---
+decision:
+  pass_per_symbol: "G1 AND G2 AND G3 AND G4"
+  both_pass: >-
+    confirmed OFFLINE/SIMULATED/PAPER economic value of the 1-day RV forecast as a costed
+    volatility-targeting overlay -> authorizes DESIGNING a separate future pre-registered
+    paper-trading study only. NEVER authorizes live trading or automated paper-execution deployment.
+  one_pass: "flagged fragile; nothing promoted"
+  any_fail: "honest null (accuracy did not translate to costed economic value); operator re-scope only"
+
+# --- Isolation-from-direction firewall (restated as a hard invariant) ---
+isolation:
+  long_only_no_sign_decision: true
+  only_differing_input_across_arms: "the variance forecast in the denominator sigma_forecast_t"
+  drift_identical_across_arms: true
+  vte_uses_no_return_assumption: true
+
+# --- Artifacts ---
+artifacts:
+  per_symbol_dir: "data/volatility/runs_ev"
+  verdict_json: "data/volatility/runs_ev/verdict.json"
+  mlflow_experiment: "volatility-econ-ev1"
