@@ -951,3 +951,42 @@ the Phase-22 free-data blocks are a separate Phase 24). Frozen before any modeli
   `volatility/realized.py` (+`daily_rth_log_return`). Docs: `docs/PHASE23_VOL.md`,
   `docs/PHASE23_PREREGISTRATION.md`; verdict ledger updated. Tests: `tests/test_phase23_vol_h1.py`.
   Full suite green, ruff + ty clean.
+
+---
+
+## Phase 24 — free-data incremental study: VIX/cross-asset adds no value; news deferred (2026-06-23)
+
+Goal: the deferred Phase-23 question — do the *free* Phase-22 data blocks improve the **confirmed**
+h=1 volatility forecast? Operator decision (data-forced): **run the VIX/cross-asset arm now** (FRED
+covers 2018→2026) and **defer the GKG news arm** (its backfill only reaches ~2022-11, ~20% of the
+OOS window). Frozen before modeling: `docs/PHASE24_PREREGISTRATION.md` + `config/phase24_freedata.yaml`
+(commit `a120d8c`).
+
+- **Design = incremental A/B over the confirmed baseline.** The modeling core (RV target, fixed
+  LightGBM, h=1, walk-forward, regime, DM) is **inherited verbatim from the Phase-23 contract**
+  (`config_freedata.py` loads `Phase23Config.load().core`), so the baseline arm IS the confirmed
+  Phase-23 model — verified: baseline QLIKE reproduces it byte-for-byte (0.246401/0.224083). Each free
+  block is an additive arm (baseline + block); both arms share OOS rows and folds (the row gate is
+  unchanged by adding feature columns). Gates: G1 incremental accuracy (aug QLIKE < baseline, sig.
+  one-sided DM), G2 regime robustness, G3 fold stability (aug beats baseline in ≥13/18 folds).
+- **Coverage precondition (Phase-18 discipline).** An arm runs/gates only if its block covers ≥80% of
+  OOS decision days; else deferred (not run as a null). **Coverage is block-specific (adversarial-
+  review fix):** market-data uses the lake date *range* (as-of join forward-fills, so range is right);
+  GKG uses **per-day partition-set membership**, NOT min/max — so an interrupted/gappy backfill cannot
+  falsely pass the gate, and a "no-news" day isn't conflated with a "missing" day (the `has_any=0`
+  ambiguity that the `isfinite` precise-coverage would miss). Also `.claude/handoff.md` was gitignored
+  (it references a credential locator + billing context; auto-push risk). Both folded from the Codex
+  review before finalizing.
+- **Verdict.** `x1` (VIX/VXN + yield-curve/oil/USD/credit): **NO incremental value, both symbols** —
+  augmented is significantly *worse* (MES QLIKE 0.260 vs 0.246, MNQ 0.234 vs 0.224; one-sided DM
+  p≈0.997; beats baseline in only 8–10/18 folds), and it hurts specifically in the turbulent regime
+  (G2 fails) while helping marginally in calm — the same pattern that killed Phase-21 h=5. SHAP ~27%
+  on the block, so it was *used*, not ignored — daily macro-vol levels just add noise to a model whose
+  edge is intraday realized-vol structure. `s3` (GKG news): **DEFERRED** (coverage ~20% < 80%); re-run
+  unchanged once the backfill covers the window. The confirmed Phase-23 baseline stands; lever not
+  re-litigated.
+- **Files:** `volatility/run_freedata.py` (new — incremental runner), `volatility/config_freedata.py`
+  (new — inherits the Phase-23 core), `.gitignore` (+`.claude/handoff.md`). Docs:
+  `docs/PHASE24_FREEDATA.md`, `docs/PHASE24_PREREGISTRATION.md`; verdict ledger updated. Tests:
+  `tests/test_phase24_freedata.py`. Full suite green, ruff + ty clean. Forecast-skill verdict only;
+  no spend, no trading. Leading next fork: an **economic-value study** of the confirmed h=1 skill.

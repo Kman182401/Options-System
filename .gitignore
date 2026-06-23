@@ -38,6 +38,9 @@ venv/
 # --- Local dev tooling (Serena code-intelligence index; not part of the system) ---
 .serena/
 
+# --- Local agent handoff notes (may reference credential locations / billing context) ---
+.claude/handoff.md
+
 # --- graphify knowledge-graph output (generated, regenerable; not part of the system) ---
 graphify-out/
 
