@@ -1,0 +1,118 @@
+# Phase 23 — 1-day realized-volatility forecast, CONFIRMATION study (frozen knobs).
+#
+# Frozen contract: docs/PHASE23_PREREGISTRATION.md. Committed BEFORE any modeling.
+# This file is a COMPLETE, self-contained snapshot of every pre-registered knob (the
+# inherited Phase-21 knobs are restated here, not referenced, so the contract cannot drift
+# via edits to config/volatility.yaml). Do NOT tune any value after seeing results
+# (anti-snooping). This is a FORECAST-SKILL verdict only — forecast skill is not tradeable money.
+
+volatility_version: "vf2" # Phase 23 (Phase 21 = vf1)
+seed: 7
+
+# Canonical verdict defined over EXACTLY these, per symbol, never pooled.
+symbols: [MES, MNQ]
+
+# --- Realized-variance estimator (IDENTICAL to Phase 21) ---
+rv:
+  sampling_minutes: 5
+  n_subsample_grids: 5
+  min_5min_returns_per_session: 20
+
+# --- Horizons: h=1 is now the GATED primary; 5 and 22 are diagnostics (re-reported) ---
+horizons:
+  primary: 1
+  diagnostic: [5, 22]
+
+# --- HAR-RV (Corsi 2009) benchmark lags (IDENTICAL to Phase 21) ---
+har:
+  lags: [1, 5, 22]
+
+# --- The SINGLE fixed, heavily-regularized LightGBM regressor (IDENTICAL to Phase 21) ---
+lgbm:
+  objective: "qlike" # disclosed fallback: "l2_log_rv" (stated in results, never silent)
+  n_estimators: 600
+  learning_rate: 0.02
+  max_depth: 3
+  num_leaves: 7
+  min_child_samples: 100
+  subsample: 0.7
+  subsample_freq: 1
+  colsample_bytree: 0.7
+  reg_alpha: 1.0
+  reg_lambda: 10.0
+  max_bin: 127
+  early_stopping_rounds: 50
+  inner_val_fraction: 0.2
+
+# --- Anchored expanding-window walk-forward OOS (IDENTICAL to Phase 21) ---
+walk_forward:
+  oos_start: "2022-01-01"
+  n_steps: 18
+
+# --- Regime split for G2 (IDENTICAL to Phase 21) ---
+regime:
+  trailing_days: 22
+
+# --- Diebold-Mariano test (IDENTICAL to Phase 21) ---
+# one-sided; HAC/Newey-West lag = h-1 (=0 at h=1, i.e. plain DM variance) + HLN small-sample fix.
+dm:
+  alpha: 0.05
+
+# --- Treatment feature blocks (IDENTICAL to Phase 21: EXISTING features only) ---
+# "Confirm first": the Phase-22 free-data blocks stay OFF. Turning them on is Phase 24's
+# separate, pre-registered question.
+features:
+  with_price: true
+  with_macro: true
+  with_sentiment: true # s2 where covered; nulls kept, not imputed
+  with_marketdata: false # x1 VIX/cross-asset — DEFERRED to Phase 24
+  with_gkg: false # s3 GKG news tone — DEFERRED to Phase 24
+
+# ===================== NEW IN PHASE 23 (the harder bar) =====================
+
+# --- Benchmark battery: the treatment must beat ALL FOUR at h=1 (intersection test) ---
+benchmarks:
+  har: true # continuity (Phase-21 benchmark)
+  random_walk: true # forecast = today's RV (martingale in variance)
+  ewma:
+    enabled: true
+    lambda: 0.94 # RiskMetrics daily standard; FIXED, no tuning
+  garch:
+    enabled: true
+    spec: "garch_1_1" # Gaussian QMLE, constant mean, on daily RTH log-returns
+    estimator: "scipy_lbfgsb" # dependency-free MLE (no `arch`/`statsmodels` dep added)
+    bounds: { omega_gt: 0.0, alpha_ge: 0.0, beta_ge: 0.0, alpha_plus_beta_lt: 1.0 }
+    init: "variance_targeting"
+    refit: "per_walk_forward_fold" # expanding-train refit; recursion rolled fwd w/ frozen params
+    # disclosed fallbacks (never silent):
+    on_nonconvergence: "carry_forward_prev_fold_params"
+    on_first_fold_failure: "riskmetrics_lambda_0_94"
+
+# --- Verdict gates: per symbol, ALL must clear at h=1 ---
+gates:
+  g1_accuracy_vs_har:
+    rule: "treat_qlike < har_qlike AND one_sided_dm_p < 0.05"
+  g2_regime_robustness:
+    rule: "treat_qlike <= har_qlike in BOTH calm and turbulent OOS sub-samples"
+  g3_benchmark_hardness:
+    # must beat EACH challenger with a significant one-sided DM
+    challengers: [random_walk, ewma, garch]
+    rule: "for each challenger: treat_qlike < bench_qlike AND one_sided_dm_p < 0.05"
+  g4_temporal_stability:
+    n_folds: 18
+    min_folds_beating_har: 13 # 13/18 = one-sided 5% binomial sign test (P(>=13/18)~0.048)
+    min_folds_beating_rw: 13
+    rule: "treat beats HAR in >=13/18 folds AND beats RW in >=13/18 folds"
+
+# --- Decision (per the frozen rule) ---
+decision:
+  pass_per_symbol: "G1 AND G2 AND G3 AND G4"
+  both_pass: "confirmed 1-day RV forecast skill -> authorizes Phase 24 free-data study (NOT trading)"
+  one_pass: "flagged fragile; no candidate promoted"
+  any_fail: "honest null; lever re-scoped only by operator decision"
+
+# --- Artifacts ---
+artifacts:
+  per_symbol_dir: "data/volatility/runs_h1"
+  verdict_json: "data/volatility/runs_h1/verdict.json"
+  mlflow_experiment: "volatility-forecast-h1"
