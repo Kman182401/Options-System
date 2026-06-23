@@ -1,350 +1,318 @@
-# Phase 25 Pre-Registration — Economic-Value Study of the Confirmed 1-Day RV Forecast (Volatility Targeting)
+# Phase 25 Pre-Registration — Economic-Value Study of the Confirmed 1-Day Volatility Forecast
 
-**Committed before any Phase 25 backtest is run or any forecast reaches a P&L simulator.** The commit
-date of this file is the pre-registration timestamp.
+**Committed before any Phase 25 simulation is run or any forecast reaches the economic layer.** The
+commit date of the finalized contract is the pre-registration timestamp.
 
-Nothing here authorizes strategy, risk, execution, or **live trading** — regardless of outcome. Phase
-25 produces an **offline / simulated / paper economic-value verdict only**: does the *forecast-accuracy*
-edge confirmed in Phase 23 translate into **economic value (money) under realistic costs**, when the
-forecast is used purely as a **volatility-targeting** signal (constant-vol scaling), per symbol? The
-system stays hard-locked to paper. Reads only the local lakes and the Phase-23 OOS forecast artifacts —
-no Databento, no IBKR, no network, no spend (`OPTIONS_DATABENTO_SPEND_OK` stays unset).
+> **Provenance note (integrity).** A first draft of this contract was auto-committed to `master` by a
+> workflow subagent (commit `5053ad8`) *before* the design was finalized — it encoded a weaker,
+> different design (variance-targeting + Sharpe only) and pre-dated the operator's stringency
+> decisions. This file **supersedes** that draft with the reviewed, synthesis-faithful, operator-
+> confirmed contract. No Phase-25 simulation had run at either commit, so the anti-snooping property
+> (contract frozen before any results exist) is fully preserved.
+
+Nothing here authorizes strategy, live backtest, risk, execution, or live trading. Phase 25 produces
+an **economic-value verdict in offline simulation only**: does the **confirmed Phase-23 h = 1
+realized-volatility forecast** deliver **positive, cost-robust, direction-free economic value** — net
+of realistic *and* stressed transaction costs — over a no-volatility-timing baseline and over every
+econometric benchmark, per symbol? The system stays hard-locked to paper. Reads only the
+deterministically-regenerated Phase-23 OOS forecasts and the local bars lake — no Databento, no IBKR, no
+network, no spend (`OPTIONS_DATABENTO_SPEND_OK` stays unset). It writes no execution code, touches no
+Risk Manager, and deploys nothing.
 
 ## Why this study, and the honest prior
 
-Phase 23 **confirmed** a 1-day realized-volatility forecast skill on both symbols (a single fixed
-no-search LightGBM beats HAR-RV, random-walk, EWMA(0.94) and GARCH(1,1), regime- and fold-robust). That
-is an **accuracy** result. The natural and only-authorized next question (per `docs/RESEARCH_VERDICTS.md`,
-the leading fork) is the **bridge from accuracy to money**: a more accurate variance forecast should let
-a constant-volatility-targeting overlay hold its risk budget *more tightly* and earn a *better
-risk-adjusted return per unit of friction* than the same overlay driven by the benchmark forecasts or by
-no volatility timing at all. An honest null — "the accuracy edge is real but too small to beat costs, or
-does not improve vol-targeting tightness enough to matter" — is an explicit, acceptable, **modal** success
-outcome (the program has six directional nulls and one positive accuracy verdict, and is proud of all of
-them). A fabricated or overstated economic edge is the **one** unacceptable outcome. This design is built
-to fool itself as little as possible and to expose its own failure modes.
+Phase 23 **confirmed** a 1-day realized-volatility forecast skill on both symbols: the fixed LightGBM
+beats HAR-RV, a random walk, EWMA(λ=0.94) and GARCH(1,1) on QLIKE (treat 0.246/0.224 vs HAR
+0.308/0.267, RW 0.760/0.695, EWMA 0.360/0.295, GARCH 0.331/0.285), Diebold-Mariano significant,
+regime-robust, in 16+/18 walk-forward folds. That is the program's first positive verdict — but it is
+a **forecast-accuracy** result. Accuracy is not money. This phase asks the bridge question: **does
+that accuracy edge translate into economically-meaningful value once it is used to size a position
+and charged realistic costs?**
 
-## The academic framework we anchor on (FIXED a priori)
+The honest prior is genuinely two-sided. A more accurate variance forecast *should* size a
+volatility-timing overlay better (the Fleming-Kirby-Ostdiek result that volatility timing has
+economic value), so a positive result is plausible. But Phase 24 already showed that a real
+*accuracy* signal (the confirmed baseline) resisted improvement, and the QLIKE gaps over the cheap
+benchmarks, while significant, are modest — a real-but-tiny accuracy edge can be **economically
+negligible after costs**. An honest null here ("the forecast is more accurate but not worth money net
+of frictions") is an explicit, acceptable, and likely-modal outcome. A fabricated or overstated
+economic edge is the one unacceptable outcome.
 
-**Volatility targeting / constant-volatility scaling**, in the **Moreira–Muir (2017) "Volatility-Managed
-Portfolios"** family and the broader vol-targeting literature (Fleming–Kirby–Ostdiek 2001/2003 on the
-economic value of volatility timing; Harvey et al. 2018 on the mechanics of vol targeting). We deliberately
-choose constant-vol scaling over a mean-variance / utility framing because it is **simpler, more robust,
-and — critically — does not require an expected-return input to express the core test**. The position is
-
-  `w_t = sigma_target / sigma_forecast_t`  (capped),
-
-a *long-only*, leverage-bounded scaling of a single futures contract's RTH return. The variance forecast
-enters in exactly one place — the denominator `sigma_forecast_t`. Every arm shares the identical
-numerator (`sigma_target`), the identical cap, the identical underlying return stream, and (where a drift
-is needed at all) the identical fixed drift. **The only thing that differs between arms is the variance
-forecast**, so any difference in the two reported quantities is attributable solely to variance-forecast
-quality.
-
-The forecast quality is allowed to show up **two ways**, and we gate the cleaner one harder:
-
-- **(a) Volatility-targeting accuracy** — how tightly the realized vol of the scaled position tracks
-  `sigma_target`. This is a **pure variance-forecast-quality metric that needs NO return assumption
-  whatsoever** (it is a statement about second moments only). It is the **primary, return-assumption-free
-  gate**.
-- **(b) Net realized risk-adjusted return** — the realized **net** Sharpe (after the pre-registered cost
-  model) of the vol-targeted position, treatment vs benchmark and vs a no-timing baseline. This is the
-  literal "money" leg, but it unavoidably touches a return stream, so it is held to a **looser,
-  no-harm-style gate** and several of its components are reported-not-gated.
+**The integrity problem this document exists to solve.** The program has **six confirmed directional
+nulls** (price, macro, TA, microstructure, sentiment, meta-labeling) — there is no edge in predicting
+the *sign* or *size* of returns. The confirmed skill is purely about the **second moment**
+(volatility). An economic-value study is dangerous precisely because a volatility-timing overlay can
+secretly become a directional / risk-premium bet (e.g. if calm days happen to be up days), smuggling
+one of the six dead directional levers back in through the side door and crediting it to the variance
+forecast. The whole design below is built to make that **structurally impossible**, and to **detect
+it empirically** if it leaks anyway.
 
 ## The single question Phase 25 answers
 
-For each symbol in EXACTLY `{MES, MNQ}`, per symbol, never pooled: **when the confirmed Phase-23 1-day RV
-forecast is used as the denominator of a capped constant-volatility-targeting overlay, does it (a) hold
-realized portfolio volatility closer to the target than every benchmark forecast and than a no-timing
-baseline (return-assumption-free), and (b) deliver a net Sharpe that is no worse than — and ideally better
-than — the benchmark- and no-timing overlays under a realistic, pre-registered, stressed cost model?**
+For each symbol independently: when the **confirmed Phase-23 forecast** (reused *verbatim* — no
+retrain, no re-tune) sizes a **capped, long-only** volatility-timing position with a **fixed,
+non-directional** expected-return assumption held identical across every arm, does it —
 
-## What is REUSED VERBATIM from Phase 23 (so no new modeling, no snooping surface)
+1. control realized portfolio volatility **more tightly** than a no-timing baseline and every
+   benchmark forecast (a **return-assumption-free** test), **and**
+2. earn a **positive, ≥ +25 bps/yr, bootstrap-significant** performance fee over the no-timing
+   baseline and a positive significant fee over **every** econometric benchmark, **net of realistic
+   and 3×-stressed costs**, regime- and fold-stable, **and**
+3. show **no directional-leakage contamination**
 
-The entire Phase-23 modeling core is **reused byte-for-byte** — **no retraining, no re-tuning, no new
-forecasts are produced.** Phase 25 consumes the *already-computed* Phase-23 per-day OOS forecasts:
+— on **both** MES and MNQ, per symbol, never pooled?
 
-- **The five per-day OOS forecasts** (log-variance scale), aligned 1:1 on OOS days, for: treatment
-  LightGBM (`fcast_treat`), HAR-RV (`fcast_har`), random-walk (`fcast_rw`), EWMA(0.94) (`fcast_ewma`),
-  GARCH(1,1) (`fcast_garch`). Loaded from the Phase-23 OOS frame (`anchored_oos_h1`), **not regenerated**.
-- **The realized daily RV series** `rv_t` (strictly positive; the forecast target's realization).
-- **`daily_rth_log_return()`** — the within-session RTH open-to-close log return per day, computed on
-  **exactly the RTH window the RV target uses** (it **excludes the overnight/weekend gap**). This is the
-  return the P&L earns; see "Return-series alignment" below for why this is the only correct choice.
-- **The 18 anchored expanding walk-forward fold ids**, the **causal regime labels** (calm/turbulent via
-  trailing-22-day mean RV vs the causal expanding-window median), and the **t0/t1 decision timestamps**.
+## What is IDENTICAL to Phase 23 (so this measures the confirmed forecast, not a new model)
 
-The Phase-23 frozen knobs (`config/phase23_vol_h1.yaml`, `vf2`) are inherited unchanged. Phase 25 adds
-**only** the economic-overlay knobs below.
+Reused **byte-for-byte** from the frozen Phase-23 contract (`config/phase23_vol_h1.yaml`, `vf2`):
 
-## The mechanism — forecast → position → P&L (FIXED a priori, exact)
+- **The forecasts themselves.** The per-day OOS forecast arrays for all six sources — treatment
+  LightGBM, HAR, RW, EWMA(0.94), GARCH(1,1) — and the per-row `fold_id` are obtained by
+  **deterministically re-running the frozen Phase-23 pipeline** (`run_h1.anchored_oos_h1` under
+  `config/phase23_vol_h1.yaml`, seed 7) — **no retrain, no re-tune, no new model.** (Phase-23 persists
+  only summary JSON, not the per-day forecast arrays; but the pipeline is bit-reproducible — one fixed
+  config, no search — so regeneration is equivalent to a frozen artifact.) Following the Phase-24
+  precedent, the implementation **MUST assert the regenerated FULL OOS frame reproduces byte-for-byte**
+  — every `fcast_*` series, the per-row `fold_id`, `session_date`/`t0`, `rv`/`y`, the aligned
+  `next_rth_log_return`, **and all per-arm OOS QLIKEs** (treat `0.246401`/`0.224083`; HAR `0.308`/`0.267`;
+  RW `0.760`/`0.695`; EWMA `0.360`/`0.295`; GARCH `0.331`/`0.285`) plus the GARCH convergence
+  diagnostics — via a frame **fingerprint**, and **fail closed** on any mismatch (treatment QLIKE alone
+  is insufficient: a drift in a benchmark forecast, the fold ids, the GARCH fallback, or the return
+  series could change the Phase-25 verdict while leaving treatment QLIKE unchanged). The regenerated OOS
+  frame is **persisted** under `data/volatility/runs_ev/` (gitignored) so the fingerprint is auditable.
+  The economic layer adds **zero fitted parameters** — it is a deterministic transform of the frozen
+  forecasts under frozen knobs.
+- **The RV target, the single fixed no-search LightGBM, the gated horizon h = 1, the anchored
+  expanding walk-forward (OOS 2022-01-01 → end, 18 folds), the regime split** (causal trailing-22-day
+  vs expanding-median), **the symbol set `{MES, MNQ}`** (per symbol, never pooled), and **seed 7** —
+  all inherited from `Phase23Config.load().core`, the confirmed model with zero drift.
+- **The realized return series.** P&L is earned on `realized.daily_rth_log_return` — the **RTH-internal
+  open-to-close** log return on **exactly the RTH window the 5-minute RV target uses** (the audited
+  Phase-23 return primitive). **Alignment (correctness-critical):** the weight is set at the close of
+  forecast-row session `t` and earns the **NEXT** session's return `r_{t+1}`, so Phase 25 builds an
+  explicit `next_rth_log_return` that maps each forecast row `session_date = t` to the RTH return of
+  session `t+1` (a one-session **forward shift**), **dropping the last row** (no `t+1` exists). It does
+  **NOT** use `run_h1.aligned_returns` directly — that returns the *same-session* `r_t` (correct for the
+  GARCH conditional-variance filter, **wrong** for the held-period P&L; using it would multiply a
+  close-set weight by an already-realized return). An **alignment unit test must prove** that forecast
+  row `t` is scored only against return session `t+1` (no same-session / look-ahead leak), per symbol.
 
-All quantities are on the **variance / RTH-internal-return** scale used by the Phase-23 target, so they
-are mutually consistent (the Phase-23 gotcha: the GARCH benchmark had to use RTH-internal returns because
-close-to-close returns include the overnight gap and mis-scale relative to the RTH-only RV — the *same*
-alignment subtlety governs the P&L return here).
+## What is NEW in Phase 25 — the economic layer (FIXED a priori)
 
-For each arm `a ∈ {treat, har, rw, ewma, garch, notiming}` and each OOS day `t`:
+The anchor is the **Fleming-Kirby-Ostdiek (2001, 2003) "economic value of volatility timing"**
+performance-fee framework, with a **return-assumption-free volatility-targeting leg**
+(Moreira-Muir 2017 / Harvey et al. 2018 mechanics) and **stationary-bootstrap (Politis-Romano 1994)
+/ West-Edison-Cho (1993)** realized-utility differential testing.
 
-1. **Forecast → forecast vol.** The arm's day-`t` log-variance forecast `f^a_t` (the next-day RV forecast,
-   on **daily** RV scale) becomes a daily volatility forecast
-   `sigma^a_t = sqrt( exp( f^a_t ) )`. (For `notiming`, see the static baseline below.)
-2. **Position (capped, long-only).** The day-`t` close sets the position held over session `t+1`:
-   `w^a_{t+1} = clip( sigma_target / sigma^a_t , w_floor , w_cap )`,
-   with `sigma_target`, `w_floor`, `w_cap` fixed a priori (below). `w` is a *unitless leverage on the RTH
-   return*; it is **always ≥ w_floor > 0** (long-only — no sign decision is ever taken; see "Isolation
-   from direction").
-3. **Gross P&L.** The position earns the next session's RTH-internal return:
-   `r^a_{t+1,gross} = w^a_{t+1} * ( ret_{t+1} - drift )`,
-   where `ret_{t+1} = daily_rth_log_return` of session `t+1`, and `drift` is the **fixed, causal,
-   non-predictive** constant defined in "Expected-return handling" (identical across all arms; default 0).
-4. **Turnover & cost.** Day-over-day the position changes by `|w^a_{t+1} - w^a_t|`; rebalancing that change
-   costs (per the cost model below)
-   `cost^a_{t+1} = |w^a_{t+1} - w^a_t| * c`,  with `c` the per-unit-notional round-trip-fraction cost.
-   The position is opened/closed in *notional* terms (the overlay scales exposure to one micro contract's
-   index notional), so turnover is measured in units of that notional and `c` is a fraction of notional.
-5. **Net P&L.** `r^a_{t+1,net} = r^a_{t+1,gross} - cost^a_{t+1}`.
+### The six arms (one per forecast source, run once per symbol)
 
-The realized **net portfolio return series** `{ r^a_{t,net} }` over all OOS days is the object both gates
-read. (A leading `t` with no prior `w` uses `w_0 = sigma_target / sigma^a` at the first OOS day for the
-turnover of the *next* step; the first day's turnover is measured against `w_floor`'s neutral start — a
-disclosed, arm-identical convention so it cannot favor any arm.)
+`TREAT` (LightGBM), `HAR`, `RW`, `EWMA`, `GARCH`, and `STATIC` (no-timing). For arm *k* on OOS day
+*t* with the day-*t*-close log-variance forecast `f^k_t`: `σ²^k_t = exp(f^k_t)` (RTH-daily-RV variance
+scale), `σ^k_t = sqrt(σ²^k_t)`. Two weight rules run in parallel on the **identical** arms and inputs:
 
-## Expected-return handling — how NO directional prediction is smuggled in (FIXED a priori)
+- **Mean-variance weight (drives the FKO utility leg):**
+  `w^k_t = clip( μ_bar / (γ · σ²^k_t), 0, w_cap )`.
+- **Vol-target weight (drives the return-free leg, drift = 0):**
+  `wv^k_t = clip( σ_target_daily / σ^k_t, w_floor, w_cap )`.
 
-This is the load-bearing integrity control. The program has **six** honest nulls at forecasting return
-**direction**; there is **no** confirmed directional edge. The economic study must measure the value of the
-**variance** forecast in isolation.
+The day-*t*-close forecast sets the position for session *t+1*: a market-on-open order (rested
+overnight — fully causal; the close-forecast cannot trade its own close) **enters `w` at *t+1*'s RTH
+open** and a market-on-close order **exits to flat at *t+1*'s RTH close**. The overlay is therefore
+**flat overnight** — pure intraday RTH-only exposure, so the P&L lives on **exactly** the RTH window
+the RV forecast targets, with **zero overnight contamination** of either return or risk (the Phase-23
+RTH-scale discipline carried into the P&L). It earns `r_{t+1} = daily_rth_log_return(t+1)`. Gross daily
+return `= w · r_{t+1}`. Because the position is **opened and closed every session**, the cost is a
+**full daily round trip on the held position** — `cost_t = 2 · c_side · w` (enter + exit) — **not** a
+day-to-day turnover `c·|Δw|` (there is no overnight carry to net against; that would describe a
+continuously-held position, which would also bear overnight P&L the RTH forecast never sees). **net**
+`= gross − cost_t`. Realized quadratic utility `U^k_t = R − ½·γ/(1+γ)·R²` with `R = 1 + net` (FKO
+realized-utility form, `rf = 0` excess-return convention). **Every arm sees the identical `r_{t+1}`,
+`μ_bar`, `γ`, `σ_target`, `w_cap`, `w_floor` and cost model — arms differ ONLY through `σ²^k_t`.**
 
-- **`drift` is a single fixed, causal, NON-predictive constant, identical across every arm and every day.**
-  It is NOT a function of any forecast, any feature, any date, or any direction signal.
-- **Default value: `drift = 0`.** With zero drift the position is a pure long-only vol-scaled exposure;
-  the *only* thing that moves P&L differentially across arms is the scaling `w`, which depends *only* on the
-  variance forecast. This makes the variance-forecast attribution airtight.
-- **Disclosed robustness variant (reported, not gated): `drift = mu_train`**, the **in-sample training-window
-  mean** of `ret` (estimated per walk-forward fold on that fold's *training* days only, frozen for the fold's
-  OOS days — never using OOS returns). This is causal and identical across arms; it exists only to show the
-  vol-targeting-error gate is unchanged by the drift choice (it is, mechanically — see below). It is **not**
-  a directional prediction: it is a single scalar reused for every day in the fold, so it can never time
-  entries or sign exposure.
-- **No per-day, per-regime, or forecast-conditioned expected return is ever used.** Any such term would be a
-  directional bet and is forbidden by this contract.
+The daily round-trip cost is large in absolute terms but **common-mode**: every arm — including
+`STATIC` — round-trips its position every session, so the bulk of the cost **cancels in the gated
+`TREAT`-vs-benchmark differentials**, leaving the timing benefit net of only the *differential* traded
+notional `2·c_side·(w^TREAT − w^k)`. This makes the flat-RTH-only model a fair differential test, not
+a strawman that costs every arm into a null. To make the null-is-not-an-artifact-of-execution claim
+explicit, a **realistic continuous-carry variant** — position held across nights, P&L on the
+close-to-close return (overnight included), cost on turnover `c·|Δw|` — is **reported, not gated**, so
+an outcome that would pass under realistic carry is surfaced for an operator re-scope rather than
+buried.
 
-## Return-series alignment — the RTH-internal vs close-to-close resolution (FIXED a priori)
+### Frozen knobs (FIXED a priori; never tuned after seeing results)
 
-The day-`t` forecast sets a position **held over session `t+1`**, and the P&L it earns must be on the **same
-scale as the RV the forecast targets**. The Phase-23 RV target and `sigma_target` are **RTH-internal**
-(open-to-close, no overnight gap). Therefore:
+| Knob | Value | Note |
+|------|-------|------|
+| Risk aversion `γ` | **5.0** (fixed) | FKO central value. `{2, 10}` reported as non-gated sensitivities — **never swept** (sweeping = multiplicity fishing). |
+| Leverage cap `w_cap` | **1.5** (long-only) | Modest, realizable micro-futures overlay; identical across all arms incl. `STATIC`. Short side disallowed (`w ≥ 0`). |
+| Vol-target floor `w_floor` | **0.1** | Vol-target leg never goes flat (no participation/sign decision). The mean-variance leg floors at 0. |
+| Annualized vol target `σ_target` | **0.10** | Return-free leg only; identical across arms so the target level cancels in the cross-arm VTE comparison. Daily `= 0.10/√252`. |
+| Expected return `μ_bar` | per-fold **training-mean** of `daily_rth_log_return` (rows strictly before the fold's OOS), frozen across the fold's OOS, **identical across all arms**; forced `≥ 0` | Disclosed fallback if a fold's training mean `≤ 0`: `μ_floor = 0.00012/day` (~3%/yr equity-premium proxy), identical across arms. **Drives only the FKO leg; the return-free leg uses drift = 0.** |
+| Risk-free `rf` | **0** | Excess-return convention; identical across arms so it cancels in every differential. |
+| Annualization | **252** RTH sessions/yr | |
 
-- **P&L uses `daily_rth_log_return` of session `t+1` — the RTH-internal open-to-close return — NOT a
-  close-to-close return.** A close-to-close return would inject the overnight/weekend gap, which the variance
-  forecast never sees and `sigma_target` never budgets for; using it would mis-scale the realized portfolio
-  vol relative to the target and **corrupt the vol-targeting-error metric** (the exact mistake the Phase-23
-  GARCH benchmark had to avoid). The holding period is thus the RTH session `t+1`; the overnight gap is
-  explicitly **out of scope** for this overlay (and would, if anything, only add un-forecast noise).
-- Annualization (for Sharpe and for `sigma_target`) uses **252 RTH sessions/year**, consistent with the
-  daily RTH series. `sigma_target` is specified as an **annualized** number and converted to a daily RTH vol
-  by `sigma_target_daily = sigma_target_annual / sqrt(252)`.
+### The no-timing baseline (`STATIC`)
 
-## The "no volatility timing" static baseline (FIXED a priori, causal)
+The FKO unconditional / no-volatility-timing portfolio: a **constant** weight from a **causal**
+unconditional variance `σ²_bar` = the mean realized daily RV over each fold's anchored-expanding
+**training** rows (strictly before the fold's OOS), frozen across the fold's OOS days. Mean-variance
+leg `w_static = clip(μ_bar/(γ·σ²_bar), 0, w_cap)`; vol-target leg
+`wv_static = clip(σ_target_daily/√σ²_bar, w_floor, w_cap)`. Its *weight* steps only at fold boundaries
+(no daily timing), **but under the gated flat-RTH-only model it still round-trips that constant weight
+every session and pays `cost_t = 2·c_side·w_static` daily, exactly like every other arm** — no free
+execution (which would unfairly handicap `TREAT`). It is the **toughest** economic yardstick (timing
+must out-earn the *static* allocation net of the *same* per-day round-trip cost) and the literature's
+canonical no-timing control. (The near-zero-cost characterization applies **only** to the reported
+continuous-carry variant, where a constant weight implies ≈ 0 turnover.)
 
-`notiming` is the "does volatility timing help at all?" control: a constant-weight overlay that targets the
-**same** `sigma_target` using the **unconditional** variance instead of a daily forecast.
+### Cost model (FIXED a priori)
 
-- For each OOS day `t`, `sigma^{notiming}_t = sqrt( exp( bar_f_t ) )`, where `bar_f_t` is the **causal
-  expanding-window mean of log-RV** using only RV up to and including day `t` (the same causal,
-  no-look-ahead construction Phase 23 uses for its expanding-median regime split). This yields a slowly
-  drifting, **non-forecasting** constant-ish weight `w^{notiming}_{t+1} = clip(sigma_target/sigma^{notiming}_t,...)`
-  — it sizes to long-run vol, it does **not** time day-to-day vol.
-- This is the literature's "no volatility timing" benchmark (constant unconditional-variance weight). Beating
-  it is the test that *daily vol timing* (any forecast) adds value; the treatment must also beat the *other
-  forecasts'* timing, which is the test that the *confirmed* forecast's superior accuracy adds value over
-  inferior forecasts.
+Charged on traded notional as a **full daily round trip** on the held position (flat-RTH-only enters at
+the open and exits at the close each session): `cost_t = 2 · c_side · w`, with the **per-side** fraction
+`c_side = commission_fraction + half_spread_fraction`. Frozen inputs: commission **$0.62/contract/side**
+(conservative IBKR retail, vs the ~$0.25 floor); spread **1 tick**, half-spread = 0.5 tick.
 
-## Instruments & the transaction-cost model (FIXED a priori, exact numbers)
+- **MES** — tick $1.25 → half-spread $0.625; per-side $1.245; **constant frozen reference notional**
+  $5 × **5000** = $25,000 → `c_side(MES) = 4.98e-5` (≈ 0.50 bps/side; round trip ≈ 1.0 bps).
+- **MNQ** — tick $0.50 → half-spread $0.25; per-side $0.87; reference notional $2 × **17500** =
+  $35,000 → `c_side(MNQ) = 2.49e-5` (≈ 0.25 bps/side; round trip ≈ 0.5 bps).
 
-- **MES (Micro E-mini S&P 500):** \$5 / index point; tick 0.25 pt = **\$1.25 / tick**. Notional per contract
-  ≈ `5 * S&P_index_level`.
-- **MNQ (Micro E-mini Nasdaq-100):** \$2 / index point; tick 0.25 pt = **\$0.50 / tick**. Notional per
-  contract ≈ `2 * Nasdaq_index_level`.
+The reference index levels (5000 / 17500) are **frozen at pre-registration** (≈ end-of-training
+late-2021 levels) and held constant over the whole OOS, so **no realized OOS price leaks into the cost
+fraction** (a deliberately conservative slight overstatement of cost fraction in the trending-up
+years). **GATED cost levels: 1× and 3× base** (3× ≈ 1.5 bps MES / 0.75 bps MNQ — wider spreads,
+partial fills, micro-contract granularity rounding). A **0.5×** optimistic level and a **5×** level
+are **reported, never used to claim a pass**. Daily mark-to-notional cost is a reported robustness
+check only.
 
-The overlay turns over notional as `w` changes day to day. Cost is charged as a **fraction of the notional
-turned over**: `cost = |Δw| * c`, with `c` the per-unit-notional round-trip cost fraction =
-`(commission_fraction + spread_fraction)`, computed per symbol from the realistic IBKR-paper retail
-frictions:
+### Significance test (FIXED a priori)
 
-- **Commission (round trip, both sides):** IBKR micro futures ≈ **\$0.50 / contract / side** (within the
-  stated \$0.25–0.62 band; the conservative-mid value is fixed a priori) → **\$1.00 round trip / contract**.
-- **Spread (round trip):** typical **1 tick bid-ask** = pay half-spread on entry and half on exit = **1 full
-  tick round trip** = \$1.25 (MES) / \$0.50 (MNQ) per contract.
-- **Per-symbol round-trip dollar cost / contract:** MES = `1.00 + 1.25` = **\$2.25**; MNQ = `1.00 + 0.50` =
-  **\$1.50**.
-- **As a fraction of notional** (the `c` used in `cost = |Δw|*c`): `c = round_trip_dollar_cost / notional`.
-  Notional is computed from a **fixed, pre-registered reference index level** per symbol (the OOS-window
-  *median* RTH close of that symbol, computed once from the local lake and frozen into the YAML — a constant,
-  so it cannot be tuned per-result and cannot leak), giving:
-  - **MES:** with reference S&P ≈ 4500 → notional ≈ `5*4500` = \$22,500 → `c_MES ≈ 2.25 / 22,500 ≈ 1.0e-4`
-    (**1.0 bp of notional per unit turnover**, baseline).
-  - **MNQ:** with reference Nasdaq ≈ 15,500 → notional ≈ `2*15,500` = \$31,000 → `c_MNQ ≈ 1.50 / 31,000 ≈
-    0.48e-4` (**≈ 0.5 bp of notional per unit turnover**, baseline).
-  - The exact reference levels are frozen at implementation time from the lake median and recorded in the
-    YAML and the results doc; the *formula* `c = round_trip_$ / (multiplier * ref_index_level)` is fixed
-    here. (Disclosed simplification: a constant reference notional avoids smuggling a price path into the
-    cost; the alternative — daily mark-to-notional — is a reported robustness check, never a gate.)
-- **Stressed cost levels (FIXED a priori): the gates must hold at `c` AND at `3*c` AND at `5*c`.** The 3×
-  level absorbs wider spreads / worse fills / partial-fill slippage; the 5× level is a deliberate
-  break-it-stress. (A `0.5×` optimistic level is reported but **never** used to claim a pass.) A net-Sharpe
-  edge that survives only at `1×` is not robust and does not pass the money gate.
+**Stationary bootstrap (Politis-Romano 1994)** on the **per-day** differential series, computed **per
+symbol** (never pooled), **one-sided**, **B = 10,000** resamples, expected block length **L = 10**
+trading days — all frozen. Applied to the per-day net realized-utility differential
+`U^TREAT_t − U^bench_t` for each gated FKO comparison. A West-Edison-Cho / DM-style HAC asymptotic
+p-value is **reported as a cross-check, never as the gate**. The return-free VTE legs use the frozen
+**13/18 binomial sign test** for temporal stability (identical to Phase-23 G4).
 
-## Leverage / weight cap (FIXED a priori)
+### The two metric legs (BOTH required — a conjunction)
 
-- **`sigma_target = 0.10` annualized (10% annual RTH vol)** — a conventional, modest vol-targeting budget,
-  fixed a priori (not tuned to either symbol). Converted to daily: `0.10 / sqrt(252) ≈ 0.0063` daily RTH vol.
-- **`w_cap = 2.0`** (max 2× the per-contract RTH exposure) — a hard pre-registered leverage cap; it binds
-  when `sigma^a_t` is very low (calm days), preventing the overlay from manufacturing return by levering into
-  quiet markets and capping tail risk. **`w_floor = 0.1`** (never fully flat; keeps the overlay long-only and
-  the turnover/cost comparison meaningful). The cap/floor are **identical across every arm**, so they cannot
-  advantage the treatment.
-- Rationale: vol targeting with a leverage cap is the standard, robust Moreira–Muir / Harvey-et-al
-  implementation; an uncapped overlay is known to produce spurious Sharpe by levering calm periods, exactly a
-  self-fooling mode (see below).
+- **Leg 1 — volatility-targeting error (VTE), return-free.** `VTE^k = | log( realized_oos_vol(wv^k ·
+  r) / σ_target_daily ) |` — how tightly the inverse-forecast overlay holds realized portfolio
+  volatility to target. **No expected-return assumption enters** (the weight is `σ_target/σ`, drift 0),
+  so a directional bet **cannot** pass it. Lower is better. A **per-fold** VTE is also computed for the
+  temporal-stability gate.
+- **Leg 2 — FKO performance fee (bps/yr), the money leg. Leverage-matched.** Because `1/σ²` is convex,
+  an unmatched timing arm holds *more on average* than `STATIC` (Jensen: `w̄_treat ≥ w̄_static`), so a
+  raw fee could be a larger-average-long bet harvesting the common equity risk premium rather than
+  volatility-forecast value. To isolate *timing* (cross-day re-allocation), **every arm's mean-variance
+  weight series is first scaled by a single causal per-fold-training constant so its training-window mean
+  weight equals `STATIC`'s** (the Fleming-Kirby-Ostdiek / Moreira-Muir leverage-matching control), then
+  re-clipped to `[0, w_cap]` (disclosed). **All gated money-leg metrics (G3–G8) use these matched
+  weights;** the raw, un-matched fee is **reported** as a diagnostic. For each pairwise comparison
+  (`TREAT` vs an arm *k*), the constant per-period fee `φ` solving `Σ_t U(R^TREAT_t − φ) = Σ_t U(R^k_t)`
+  on **net-of-cost** returns; the economically-admissible root (smaller `|φ|`) is taken (disclosed; any
+  non-convergence is a **FAIL**, never a silent re-spec); annualized `Δ_bps = φ · 252 · 1e4`. A positive
+  `Δ_bps` means the γ-investor pays to switch to the treatment.
 
-## Metrics (FIXED a priori, exact formulas)
-
-Let `{w_t}` be an arm's daily weights, `{r_t,net}` its net daily RTH portfolio returns over the `N` OOS days,
-and `sigma_tgt_d = sigma_target/sqrt(252)` the daily target vol.
-
-### Primary, return-assumption-FREE: Volatility-Targeting Error (VTE)
-
-The realized vol of the **gross, drift-free** scaled position vs the target — a pure second-moment statement:
-let `p_t = w_t * ret_t` (gross, drift-free, RTH-internal). Define
-  **`VTE = | log( realized_vol(p) / sigma_tgt_d ) |`**,  where `realized_vol(p) = std(p_t)` over the OOS days
-(annualization cancels inside the ratio, so VTE is scale-free and computed on the daily series). Lower is
-better; 0 means the overlay held the target exactly. **A per-fold VTE** is also computed (std within each of
-the 18 folds) for the temporal-stability gate. VTE uses **no drift and no cost** — it is purely "did
-`1/sigma_forecast` deliver constant vol", the cleanest possible variance-forecast-quality readout.
-
-### Money leg: net Sharpe
-
-  **`Sharpe^a = sqrt(252) * mean(r^a_{t,net}) / std(r^a_{t,net})`** over the OOS days (annualized), computed
-at each cost level `c`, `3c`, `5c`. Differential `ΔSharpe = Sharpe^treat − Sharpe^benchmark` per benchmark
-and vs `notiming`. (With `drift=0` the *level* of Sharpe is driven by the underlying RTH drift common to all
-arms; the **differential** across arms is driven only by the variance-forecast scaling — see isolation
-argument. We gate the differential, not the level.)
-
-## Primary economic-value metric (the single headline)
-
-**The annualized net Sharpe-ratio differential of the treatment-driven overlay over the no-timing baseline,
-at the baseline cost level**, `ΔSharpe_{treat vs notiming}@1c`, reported per symbol — together with the
-**VTE ratio** `VTE_treat / VTE_notiming`. The VTE leg is the *cleaner* headline; the Sharpe differential is
-the *money* headline. Both are reported; the verdict gates below weight VTE more heavily.
-
-## Secondary metrics (reported, NOT gated)
-
-- Realized annualized vol of each arm's position (level, not just VTE).
-- Net Sharpe **level** of every arm at every cost level.
-- Per-arm annualized turnover `mean(|Δw|) * 252` and total cost drag (bps/yr).
-- Max drawdown and Sortino of each arm's net series.
-- VTE and Sharpe in the calm vs turbulent regime sub-samples (the Phase-23 split).
-- Mincer–Zarnowitz-style calibration of `sigma_forecast` vs realized (already in Phase 23; restated).
-- The `drift = mu_train` robustness variant's Sharpe differentials.
-- The daily-mark-to-notional cost robustness variant.
-
-## Verdict gates — per symbol, at h = 1 (FIXED a priori)
+## Verdict gates — per symbol, ALL must clear; `E9` must not void (FIXED a priori)
 
 | Gate | Threshold | Defends against |
 |------|-----------|-----------------|
-| **G1 — VTE vs no-timing (PRIMARY, return-free)** | Treatment VTE **strictly below** the `notiming` baseline's VTE, AND treatment VTE strictly below **each** benchmark forecast's VTE {HAR, RW, EWMA, GARCH}. (Intersection test; the daily vol forecast must hold the target tighter than no-timing AND tighter than every rival forecast.) | A directionless, return-free test that the *confirmed-better* forecast actually controls vol better. Cannot be gamed by any return assumption. |
-| **G2 — VTE temporal stability** | Treatment per-fold VTE below the `notiming` per-fold VTE in **≥ 13 of the 18** walk-forward folds (one-sided 5% binomial sign-test threshold, identical to Phase 23/24). | A single-regime VTE win (e.g. only the 2022 vol spike). |
-| **G3 — net Sharpe no-harm under stress** | Treatment net Sharpe **≥** `notiming` net Sharpe (`ΔSharpe ≥ 0`) at **all three** cost levels {`c`, `3c`, `5c`}, AND treatment net Sharpe ≥ **each** benchmark forecast's net Sharpe at the baseline cost `c`. (No-harm form: the money leg must not be *worse* than no-timing even under 5× costs.) | Claiming a money edge that exists only at unrealistically low costs, or that a tighter vol target was bought with worse risk-adjusted return. |
-| **G4 — turnover/cost sanity** | Treatment annualized cost drag at `3c` **< 25%** of its gross annualized return magnitude (the overlay is not a cost-churn machine), AND treatment turnover is within **2×** of the `notiming` turnover (the edge is not just "trade far more"). | An apparent edge manufactured by excessive rebalancing that realistic costs would erase, or a turnover-driven artifact. |
+| **G1 — VTE intersection (return-free)** | `VTE_treat < VTE_static` **AND** `VTE_treat < VTE_bench` for **each** of {HAR, RW, EWMA, GARCH}. | An accuracy edge that doesn't even control second-moment risk; impossible to pass with a directional bet (no return enters). |
+| **G2 — VTE temporal stability** | `treat` per-fold VTE `< static` per-fold VTE in **≥ 13 of 18** folds (one-sided 5% binomial sign test). | A single-period VTE win (e.g. the 2022 vol spike) masquerading as durable second-moment control. |
+| **G3 — economic value vs `STATIC`** | `Δ_bps(TREAT vs STATIC) > +25 bps/yr` at **base** cost, `γ = 5`, stationary-bootstrap one-sided `p < 0.05`. | A statistically-real but economically-trivial fee; the +25 floor forces material value above costs; `STATIC` removes the just-being-invested risk-premium confound. |
+| **G4 — economic value vs EVERY benchmark** | `Δ_bps(TREAT vs B) > 0` with bootstrap `p < 0.05` for **each** `B ∈ {HAR, RW, EWMA, GARCH}` (intersection). | Strawman-benchmark threat — the accuracy edge must out-earn the hardest variance forecasters (RW, GARCH) in money, net of cost. |
+| **G5 — stressed-cost robustness** | `G3` and `G4` hold **in sign** with bootstrap `p < 0.05` at the **3×** cost level (the +25 floor in G3 may relax to strictly `> 0` at 3×; significance must hold). | Cost-assumption fragility / a high-turnover mirage that survives only at optimistic frictions. |
+| **G6 — regime robustness** | `Δ_bps(TREAT vs STATIC) ≥ 0` in **both** the calm and turbulent OOS sub-samples (sign-consistent, base cost, `γ = 5`, frozen Phase-23 regime labels). | Regime concentration — value in turbulent periods but destroyed in calm, i.e. a disguised volatility-*level* bet. |
+| **G7 — temporal stability of value** | `TREAT` beats `STATIC` on net realized utility in **≥ 13 of 18** folds **AND** beats `RW` in **≥ 13 of 18** folds. | A fee earned entirely in one fold/regime masquerading as durable economic value. |
+| **G8 — exposure neutrality & cost-erosion** | Leverage-matching held: post-match `|w̄_treat − w̄_static| ≤ 0.05 · w̄_static` (the gated fee is pure timing, not a bigger-average-position bet) **AND** the `TREAT`-vs-`STATIC` **net** fee at 3× cost retains `≥ 50%` of its **gross** (pre-cost) fee (costs don't eat the timing benefit). | A "win" that is really a larger-average-long risk-premium grab — closed jointly with E9 (matched mean exposure **and** near-zero active-exposure correlation) — or an edge mostly consumed by churn. |
+| **E9 — directional-leakage VOID gate** | For **each** gated comparison arm `k ∈ {STATIC, HAR, RW, EWMA, GARCH}`: `|corr(w^TREAT_t − w^k_t, r_{t+1})| < 0.10` — the **active** exposure that drives that money differential (mean-variance weight leg). Per-arm absolute `|corr(w_t, r_{t+1})|` reported as a diagnostic. **If any active-exposure correlation ≥ 0.10, the verdict is VOIDED**, regardless of G1–G8. | The active overweight secretly being a directional / risk-premium-timing bet (a low absolute-weight correlation can still hide a directionally-correlated overweight) — the program's refusal to smuggle back the six directional nulls. |
 
-Calibration, the regime sub-sample breakdowns, the `0.5×` optimistic cost level, the h=5/h=22 diagnostic
-overlays, and the `drift=mu_train` variant are **reported, not gated.**
+Calibration (Mincer-Zarnowitz, restated from Phase-23), the `γ ∈ {2, 10}` fees, the 0.5×/5× cost
+levels, Sharpe / Sortino / Calmar / certainty-equivalent / max-drawdown, turnover and gross-vs-net
+drag, the realized-weight distribution, the `exp(r)−1` simple-return re-run, the daily
+mark-to-notional and fixed-equity-premium-`μ` robustness variants, and `corr(w_t, r_{t+1})` per arm
+are **reported, not gated**.
+
+## How the differential is isolated from a directional bet (the integrity core)
+
+Four **structural** locks make any economic differential attributable **only** to the variance
+forecast, plus one **empirical** backstop:
+
+1. `μ_bar` and `γ` are **single fixed causal scalars identical across all six arms**, frozen from
+   training data; the return-free leg uses **drift = 0**. `μ_bar` carries **zero day-to-day or
+   directional information** — the same constant enters every arm's weight numerator every day, so the
+   cross-arm difference in position is a deterministic function of the two variance forecasts alone.
+   *(Note: because the weight cap and the quadratic utility are non-linear, `μ_bar` does **not** cancel
+   the differential exactly — it is **not** assumed to. Its value injects no timing signal, which is
+   the isolation claim; the verdict's near-invariance to the `μ_bar` specification is **verified by the
+   reported fixed-equity-premium variant**, not asserted.)*
+2. **Long-only clamp** `[0, w_cap]` (and `w_floor > 0` on the vol-target leg): no day can short or flip
+   sign — the weight only **resizes a fixed-direction long exposure** (pure second-moment timing).
+   Moreover the gated money leg is **leverage-matched** (every arm rescaled to `STATIC`'s causal
+   training-mean weight), so the treatment cannot win by holding a larger *average* long position (the
+   Jensen `w̄_treat ≥ w̄_static` risk-premium confound) — only by *re-allocating* exposure across days.
+3. The **identical realized `r_{t+1}`** feeds every arm, so the cross-arm P&L difference is exactly
+   `(w^TREAT_t − w^bench_t) · r_{t+1}` — a function of the two variance forecasts and the common return.
+4. The **return-free VTE leg** (G1/G2) consumes **no return assumption whatsoever**; a directional bet
+   cannot pass it, and it is a **co-required** part of every PASS.
+5. **Empirical backstop `E9`:** the verdict is **voided** if the **active exposure** behind any gated
+   differential is directionally correlated — `|corr(w^TREAT_t − w^k_t, r_{t+1})| ≥ 0.10` for any
+   `k ∈ {STATIC, HAR, RW, EWMA, GARCH}` — catching any residual directional channel in the *overweight*
+   (not just the absolute weight) even if the structural locks were somehow circumvented.
+
+A positive result therefore means the treatment's variance forecast **sized exposure better** (more
+when variance was truly low, less when truly high) — variance-forecast value, **not** return timing.
 
 ## Decision rule (FIXED a priori)
 
-- **Per symbol: ECONOMIC VALUE iff `G1 ∧ G2 ∧ G3 ∧ G4` all clear at h = 1.** The primary, return-free VTE
-  gates (G1, G2) are the spine; the money gates (G3, G4) are deliberately *no-harm* (≥, not strictly >) so a
-  PASS cannot be manufactured by an over-levered return grab.
-- **Both symbols PASS** → **"confirmed economic value of the 1-day RV forecast as a volatility-targeting
-  signal (offline, simulated, paper, costed)."** This authorizes **only** (a) documenting the result and (b)
-  designing a *separate, future* pre-registered paper-trading study (and, much later, the Phase-2 options
-  framing). **It NEVER authorizes live trading, nor even an automated paper-execution deployment** — those
-  require their own pre-registered risk/execution gates. Economic value in a costed simulation is still not a
-  trading authorization.
-- **Exactly one symbol passes** → flagged **fragile**; recorded, nothing promoted.
-- **Either/both fail** → an **honest null**: the confirmed *accuracy* edge does **not** translate into costed
-  economic value as a vol-targeting overlay. Recorded in `docs/RESEARCH_VERDICTS.md`; the lever is re-scoped
-  only by a deliberate operator decision (e.g. a different economic framing), never auto-re-litigated.
-
-## Isolation from direction — why the differential measures variance-forecast value, NOT a directional bet
-
-- The position is **always long-only** (`w ≥ w_floor > 0`): **no arm ever takes a sign/direction decision.**
-  There is no entry/exit timing, no sign forecast, no conditioning of *whether* to be in the market.
-- The **only** input that differs across arms is the variance forecast in the denominator `sigma^a_t`. The
-  numerator (`sigma_target`), the cap/floor, the underlying RTH return stream `ret_{t+1}`, and the drift are
-  **byte-identical** across `{treat, har, rw, ewma, garch, notiming}`.
-- With `drift = 0`, each arm's P&L is `w^a_{t+1} * ret_{t+1}`; the cross-arm difference is
-  `(w^{treat}_{t+1} - w^{bench}_{t+1}) * ret_{t+1}`, a function of nothing but the two variance forecasts and
-  the (common) return. Any economic differential is therefore **mechanically attributable solely to the
-  variance forecast.**
-- The **VTE gate uses no return assumption at all** — it is a pure statement about whether `1/sigma_forecast`
-  produces constant second moments. It is impossible for a directional bet to pass G1/G2, because direction
-  never enters them.
-- Consequently a PASS here is evidence that the *variance forecast* has economic value, and is **not** a
-  return-timing bet relabeled as vol timing.
-
-## Self-fooling modes and baked-in mitigations
-
-| Mode | Mitigation (baked into this contract) |
-|------|----------------------------------------|
-| **Smuggling a directional bet** (sizing/sign reacts to a return signal). | Long-only `w ≥ w_floor`; `drift` fixed/causal/non-predictive and arm-identical; VTE gate is return-free; differential is mechanically variance-only (see isolation section). |
-| **Leverage-grab Sharpe** (uncapped overlay levers calm periods to fake Sharpe). | Hard `w_cap = 2.0`, identical across arms; G3 is *no-harm* (≥ notiming), not "beat by levering"; G4 caps turnover within 2× of no-timing. |
-| **Cost too optimistic** (edge vanishes with realistic frictions). | Gates must hold at `c`, `3c`, **and** `5c`; the `0.5×` optimistic level is reported but never gates; cost numbers fixed a priori from IBKR-paper retail frictions. |
-| **Snooping / tuning after seeing results** (pick the framing/target/threshold that passes). | Reuse Phase-23 forecasts **verbatim** (no retrain); every overlay knob frozen in YAML before any P&L is computed; each arm runs once per symbol; per-symbol over exactly {MES,MNQ}, never pooled. |
-| **Wrong return scale** (close-to-close return mis-scales vs RTH RV → fake VTE). | P&L uses `daily_rth_log_return` (RTH-internal, gap-excluded) exactly as the RV target; 252-RTH annualization; the Phase-23 gotcha explicitly carried forward. |
-| **Strawman comparison** (beat only the easy no-timing baseline). | G1/G3 are intersection tests: treatment must beat no-timing AND each of {HAR, RW, EWMA, GARCH}. |
-| **Single-regime artifact** (whole edge from one period). | G2 per-fold sign test (≥13/18); regime sub-sample reporting. |
-| **Turnover/cost-churn artifact** (apparent edge is rebalancing noise costs would kill). | G4 turnover & cost-drag sanity; net (post-cost) series used in every money metric. |
-| **Multiple-comparisons inflation** (many arms × many cost levels → something passes by chance). | Verdict requires the *intersection* of all four gates per symbol on *both* symbols; the worst-case cost level governs G3; no metric-fishing — VTE is the pre-declared spine. |
-| **Calibration drift faking VTE** (a biased-but-tight forecast). | MZ calibration reported; VTE measured against the *target*, and the no-timing baseline shares the same target, isolating tightness from level. |
-
-## What a PASS does and does NOT authorize
-
-- **DOES:** record "confirmed economic value of the 1-day RV forecast as a costed, simulated,
-  paper-only volatility-targeting overlay, per symbol"; authorize *designing* a separate, future,
-  pre-registered **paper-trading** validation (and eventually the Phase-2 options framing) of the same
-  overlay.
-- **DOES NOT:** authorize live trading. Does **not** authorize an automated paper-execution deployment, a
-  risk-manager wiring, or any capital. Does **not** promote a "model" into the live engine (the live engine
-  stays empty). Economic value in an offline simulation is **not** a trading authorization — that requires
-  its own pre-registered risk/execution gates. The system stays hard-locked to paper.
+- **Per symbol: PASS iff `G1 ∧ G2 ∧ G3 ∧ G4 ∧ G5 ∧ G6 ∧ G7 ∧ G8` all clear AND `E9` is not voided**,
+  at the headline `γ = 5` and base cost (with the pre-registered stress / regime / fold robustness as
+  specified).
+- **Both symbols PASS** → **"confirmed economic value of the 1-day volatility forecast (offline /
+  simulated / paper, net of realistic and stressed costs)."** This authorizes, at most, a deliberate
+  operator decision to scope a **separate, future, pre-registered** paper-trading-prototype (or an
+  options / variance-swap valuation) design that must pass its own gates. **It never authorizes live
+  trading.**
+- **Exactly one symbol PASS** → flagged **fragile**; nothing promoted.
+- **Neither / any gate fails on both / any VOID** → **honest null**: the confirmed accuracy edge does
+  **not** translate into economically-meaningful, cost-robust, direction-free value. Recorded in
+  `docs/RESEARCH_VERDICTS.md` as an explicitly **acceptable, likely-modal** outcome; the economic-value
+  lever is then re-scoped only by a deliberate operator decision, not auto-re-litigated.
 
 ## Anti-snooping commitments (FIXED)
 
-- `sigma_target = 0.10`, `w_cap = 2.0`, `w_floor = 0.1`, the cost numbers (commission \$0.50/side, 1-tick
-  spread, the per-symbol round-trip dollars, the reference-notional formula), the stressed multipliers
-  {1×, 3×, 5×} (and the non-gating 0.5×), the VTE and Sharpe formulas, the four gates and their thresholds
-  (including 13/18), the long-only `drift=0` default and the `mu_train` reported variant, the no-timing
-  baseline construction, the 252-RTH annualization, and the reuse-verbatim of Phase-23 forecasts are **all
-  fixed before any Phase-25 P&L is computed** and are **not** changed after seeing results.
-- **No knob-tuning, no cost-level fishing, no framing-swapping, no target-vol fishing** to manufacture a
-  pass. Each arm runs once per symbol; the canonical verdict is over exactly {MES, MNQ}.
-- Disclosed-not-silent conventions only: the first-day turnover convention, the constant reference notional,
-  and the `mu_train` robustness variant (all reported).
-- If the pipeline must change for a legitimate engineering reason, `econ_version` is bumped and the change is
-  documented in `docs/DECISIONS.md`.
+- The framework (FKO performance fee + return-free VTE leg), the six arms, the two weight rules, every
+  frozen knob (`γ = 5`, `w_cap = 1.5`, `w_floor = 0.1`, `σ_target = 0.10`, the `μ_bar` rule and its
+  `≥ 0` fallback, `rf = 0`, the exact cost numbers and the constant frozen reference notional), the
+  gated 1×/3× cost levels, the stationary-bootstrap parameters (`B = 10,000`, `L = 10`), the +25 bps
+  minimum-effect floor, the nine gates and their thresholds (including 13/18), and the RTH-internal
+  return alignment are all fixed **before** any Phase-25 run and are **not** changed after seeing
+  results.
+- **No `γ`-sweeping, no metric-fishing, no threshold-tuning, no cost-number shopping, no
+  framing-swapping** to manufacture a pass. Each arm runs **once** per symbol. Every gate is a
+  conjunction the treatment must **all** pass — there is no "beat at least one" path; the secondary
+  `γ`s and cost levels are reported-not-gated and add **no** pass-paths.
+- The Phase-23 forecasts are reused **verbatim** (deterministically regenerated under the frozen
+  Phase-23 config + seed, fingerprint-verified, never refit); the economic layer adds **zero fitted
+  parameters**. Disclosed-not-silent fallbacks only: the `μ_bar ≤ 0 → μ_floor` substitution and
+  the fee-root non-convergence FAIL.
+- The canonical `verdict.json` is defined over **exactly `{MES, MNQ}`, per symbol, never pooled**; a
+  subset / superset run **refuses to save** the canonical decision (the Phase-20/23 guard).
+- If the pipeline must change for a legitimate engineering reason, the `econvalue_version` is bumped
+  and the change is documented in `docs/DECISIONS.md`.
 
 ## Versioning & artifacts
 
-- `econ_version: "ev1"` (Phase 25). Frozen knobs: `config/phase25_econ.yaml` (this commit). The forecasting
-  core is inherited verbatim from `config/phase23_vol_h1.yaml` (`vf2`).
+- `econvalue_version: "ev1"`. Frozen knobs: `config/phase25_econ.yaml` (this commit); the modeling
+  core is **inherited verbatim** from `config/phase23_vol_h1.yaml` (`vf2`).
 - Per-symbol summaries → `data/volatility/runs_ev/<symbol>.json`; combined verdict →
-  `data/volatility/runs_ev/verdict.json` (gitignored). MLflow experiment `volatility-econ-ev1`.
+  `data/volatility/runs_ev/verdict.json` (gitignored; regenerate by re-running the module). MLflow
+  experiment `volatility-econvalue-ev1`.
 
 ## What this document is NOT
 
-Not an implementation and not a backtest run. It commits zero P&L and zero models. The Phase 25
-implementation will reference this frozen contract and must not deviate from it.
+Not an implementation and not a run. It commits zero simulations and zero results. It writes no
+execution / risk / live-loop code, changes nothing about the paper-only lock, and deploys nothing. The
+Phase-25 implementation will reference this frozen contract and must not deviate from it. Economic
+value in this offline simulation — like forecast skill before it — is **not** a trading authorization.

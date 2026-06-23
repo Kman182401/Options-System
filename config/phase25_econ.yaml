@@ -1,125 +1,235 @@
 # Phase 25 — Economic-value study of the confirmed 1-day RV forecast (frozen knobs).
 #
-# Frozen contract: docs/PHASE25_PREREGISTRATION.md. Committed BEFORE any P&L is computed.
-# This file is a COMPLETE, self-contained snapshot of every pre-registered economic-overlay
-# knob. The FORECASTING core is inherited VERBATIM from config/phase23_vol_h1.yaml (vf2) —
-# no retraining, no re-tuning, no new forecasts. Do NOT tune any value after seeing results
-# (anti-snooping). This is an OFFLINE / SIMULATED / PAPER economic-value verdict only —
-# it authorizes NO live trading and NO automated paper-execution deployment, regardless of outcome.
+# Frozen contract: docs/PHASE25_PREREGISTRATION.md. Committed BEFORE any P&L/utility is computed.
+# This file is a COMPLETE, self-contained snapshot of every pre-registered economic-overlay knob.
+# The FORECASTING core (RV target, fixed LightGBM, h=1, walk-forward, regimes, symbols, seed) is
+# inherited VERBATIM from config/phase23_vol_h1.yaml (vf2) — no retrain, no re-tune, no new forecasts;
+# the economic layer adds ZERO fitted parameters. Do NOT tune any value after seeing results
+# (anti-snooping). OFFLINE / SIMULATED / PAPER economic-value verdict only — authorizes NO live
+# trading and NO automated paper-execution deployment, regardless of outcome.
+#
+# NOTE: a workflow subagent auto-committed a weaker first draft (commit 5053ad8) before the design
+# was finalized; this file supersedes it with the reviewed, operator-confirmed contract. No Phase-25
+# simulation had run at either commit, so the "frozen before results" property holds.
 
-econ_version: "ev1"
+econvalue_version: "ev1"
 inherits_core: "config/phase23_vol_h1.yaml" # vf2 — RV target, fixed LightGBM, walk-forward, regimes
 
 # Canonical verdict defined over EXACTLY these, per symbol, never pooled.
 symbols: [MES, MNQ]
 
-# Framework: constant-volatility targeting (Moreira-Muir 2017 flavor; Fleming-Kirby-Ostdiek
-# economic value of volatility timing). Position w_t = sigma_target / sigma_forecast_t (capped).
-framework: "volatility_targeting_constant_vol"
+# Framework: Fleming-Kirby-Ostdiek (2001/2003) economic-value-of-volatility-timing performance fee
+# (the money leg) + a return-assumption-FREE volatility-targeting-error leg (Moreira-Muir 2017 /
+# Harvey et al. 2018) + stationary-bootstrap (Politis-Romano 1994) / West-Edison-Cho realized-utility
+# differential testing. BOTH legs are required (the forecast must be more accurate AND more valuable).
+framework: "fko_performance_fee_plus_returnfree_vol_targeting"
 
-# --- The arms (consume Phase-23 OOS forecasts VERBATIM; no model is retrained) ---
+# --- The six arms (consume Phase-23 OOS forecasts; no model is retrained) ---
 arms:
   treat: "fcast_treat" # confirmed Phase-23 LightGBM (the treatment)
   har: "fcast_har"
   rw: "fcast_rw"
   ewma: "fcast_ewma"
   garch: "fcast_garch"
-  notiming: "expanding_mean_log_rv" # causal expanding-window mean log-RV (no daily timing)
+  static: "fold_train_unconditional_variance" # FKO no-timing: causal per-fold mean training RV
+
+# Phase-23 forecasts are obtained by DETERMINISTICALLY RE-RUNNING the frozen Phase-23 pipeline
+# (run_h1.anchored_oos_h1, seed 7, config/phase23_vol_h1.yaml) — no retrain, no re-tune, no new model.
+# Phase-23 persists only summary JSON, not the per-day fcast_* arrays; the pipeline is bit-reproducible,
+# so regeneration == a frozen artifact. Fail-closed drift guard (Phase-24 precedent).
+reproduction_guard:
+  method: "deterministic_regeneration" # re-run frozen Phase-23 pipeline; no persisted forecast artifact required
+  fingerprint_required: true # abort unless the FULL regenerated OOS frame reproduces byte-for-byte
+  fingerprint_covers: "fcast_treat/har/rw/ewma/garch, fold_id, session_date/t0, rv/y, next_rth_log_return, garch_diag"
+  # treatment QLIKE alone is INSUFFICIENT — benchmark/fold/return drift could flip the verdict; pin ALL arms:
+  expected_qlike:
+    treat: { MES: 0.246401, MNQ: 0.224083 } # byte-level confirmed
+    har: { MES: 0.308, MNQ: 0.267 }
+    rw: { MES: 0.760, MNQ: 0.695 }
+    ewma: { MES: 0.360, MNQ: 0.295 }
+    garch: { MES: 0.331, MNQ: 0.285 }
+  persist_oos_frame: "data/volatility/runs_ev" # gitignored; makes the fingerprint auditable
+
+# --- Two weight rules, run in parallel on the IDENTICAL arms/inputs (FIXED a priori) ---
+# Mean-variance (drives the FKO utility/fee leg): w = clip( mu_bar / (gamma * sigma2_forecast), 0, w_cap )
+# Vol-target (drives the return-FREE VTE leg, drift=0): wv = clip( sigma_target_daily / sigma_forecast, w_floor, w_cap )
+weights:
+  mean_variance: "clip( mu_bar / (gamma * exp(f_t)), 0, w_cap )"
+  vol_target: "clip( sigma_target_daily / sqrt(exp(f_t)), w_floor, w_cap )"
+
+# Money-leg leverage matching (FKO / Moreira-Muir): scale each arm's MEAN-VARIANCE weights by a causal
+# per-fold-TRAIN constant so its training-window mean weight == STATIC's, then re-clip to [0, w_cap].
+# Isolates volatility TIMING (cross-day re-allocation) from a larger-average-long risk-premium bet
+# (Jensen: raw w_bar_treat >= w_bar_static). ALL gated money metrics (G3-G8) use matched weights; the
+# raw un-matched fee is REPORTED. The return-free VTE leg is UNAFFECTED.
+leverage_matching:
+  enabled: true
+  applies_to: "mean_variance_money_leg" # G3-G8 only
+  match_target: "static_per_fold_train_mean_weight"
+  normalizer: "causal_per_fold_train_constant"
+  reclip: "[0, w_cap]"
+  raw_unmatched_fee: "reported_not_gated"
 
 # --- Overlay / position knobs (FIXED a priori) ---
 overlay:
-  sigma_target_annual: 0.10 # 10% annualized RTH vol budget (not tuned per symbol)
+  gamma: 5.0 # risk aversion (FKO central). FIXED, never swept. {2,10} REPORTED-not-gated sensitivities.
+  gamma_reported_only: [2.0, 10.0]
+  w_cap: 1.5 # hard leverage cap; identical across ALL arms incl. static. Long-only (w >= 0).
+  w_floor: 0.1 # vol-target leg never flat (no participation/sign decision). MV leg floors at 0.
+  sigma_target_annual: 0.10 # 10% annualized RTH vol budget; identical across arms (cancels in VTE).
   ann_factor: 252 # RTH sessions/year; sigma_target_daily = 0.10/sqrt(252) ~= 0.0063
-  w_cap: 2.0 # hard leverage cap (binds in calm markets; identical across arms)
-  w_floor: 0.1 # long-only floor (never flat; no sign/direction decision is ever taken)
-  long_only: true # w >= w_floor > 0 ALWAYS — isolates variance value from any directional bet
 
 # --- Expected-return / drift handling (the directional-bet firewall) ---
-# Fixed, causal, NON-predictive, IDENTICAL across all arms. Default 0 => pure vol-scaled long.
+# mu_bar drives ONLY the FKO mean-variance leg. Single fixed causal NON-predictive scalar per
+# (symbol, fold): mean of daily_rth_log_return over the fold's anchored-expanding TRAINING rows
+# (strictly before its OOS), frozen across the fold's OOS days, IDENTICAL across all six arms.
+# Forced >= 0. The return-free VTE leg uses drift = 0 (no expected return enters at all).
 drift:
-  mode: "zero" # GATED design. drift = 0 for every arm, every day.
-  reported_variant: "mu_train" # per-fold TRAIN-window mean of ret, frozen for OOS; REPORTED not gated
-  forbidden: "any per-day / per-regime / forecast-conditioned expected return (= directional bet)"
+  mu_bar: "per_fold_train_mean_daily_rth_log_return" # FKO leg only; identical across arms
+  mu_floor_per_day: 0.00012 # ~3%/yr equity-premium proxy; disclosed fallback if a fold's train mean <= 0
+  vol_target_leg_drift: 0.0 # return-FREE leg: NO expected return ever
+  rf: 0.0 # excess-return convention; identical across arms so it cancels in every differential
+  forbidden: "any per-day / per-regime / forecast-conditioned expected return (= a directional bet)"
 
 # --- Return series for P&L (the RTH-internal alignment fix; Phase-23 GARCH gotcha) ---
-# P&L earns daily_rth_log_return of session t+1 (RTH open-to-close, EXCLUDES overnight gap),
-# on EXACTLY the RTH window the RV target uses — so it scales consistently with sigma_target.
+# P&L earns daily_rth_log_return of session t+1 (RTH open-to-close, EXCLUDES overnight gap), on
+# EXACTLY the RTH window the RV target uses — so it scales consistently with sigma_target/sigma2.
 returns:
   source: "daily_rth_log_return" # RTH-internal; NOT close-to-close (gap would mis-scale vs RV)
-  holding_period: "RTH session t+1"
+  pnl_return: "next_rth_log_return" # r_{t+1}: forecast row t scored vs session t+1 (one-session FORWARD shift; drop last row)
+  alignment_guard: "NOT run_h1.aligned_returns (that is SAME-session r_t); unit test must prove t scored vs t+1 only"
+  execution_model: "flat_rth_only" # enter at t+1 RTH open, EXIT to flat at t+1 RTH close; flat overnight
+  holding_period: "session t+1 RTH open -> RTH close" # order rests overnight; close-forecast can't trade its own close
   annualization: 252
+  simple_return_rerun: "exp(r)-1 re-run of the headline fee is a REPORTED invariance check"
+  continuous_carry_variant: >-
+    REPORTED-not-gated robustness: position held across nights, P&L on close-to-close return (overnight
+    INCLUDED), cost on turnover c*|dw| — the realistic-carry view, surfaced so an honest null is never an
+    artifact of the conservative flat-RTH-only execution.
+
+# --- The no-timing baseline (STATIC) — FKO unconditional portfolio (FIXED a priori, causal) ---
+static_baseline:
+  sigma2_bar: "mean realized daily RV over each fold's anchored-expanding TRAINING rows, frozen for its OOS"
+  mean_variance_weight: "clip( mu_bar / (gamma * sigma2_bar), 0, w_cap )" # weight steps only at fold boundaries
+  vol_target_weight: "clip( sigma_target_daily / sqrt(sigma2_bar), w_floor, w_cap )"
+  cost_note: >-
+    under the GATED flat-RTH-only model STATIC ROUND-TRIPS its constant weight every session:
+    cost_t = 2*c_side*w_static daily, the SAME per-day round-trip cost as every other arm (NO free
+    execution — that would unfairly handicap TREAT). Near-zero cost applies ONLY to the reported
+    continuous-carry variant (constant weight => ~0 turnover). The toughest economic yardstick.
 
 # --- Transaction-cost model (FIXED a priori, exact) ---
-# cost_{t+1} = |w_{t+1} - w_t| * c ; c = round_trip_dollar_cost / (multiplier * ref_index_level)
+# Flat-RTH-only => the position is opened at the open and closed at the close EVERY session: cost is a
+# FULL daily round trip on the held position, cost_t = 2 * c_side * w  (NOT a turnover c*|dw|, which
+# would describe a continuously-carried position that also bears overnight P&L the RTH forecast can't
+# see). c_side = commission_fraction + half_spread_fraction (per-SIDE fraction of notional). The
+# round-trip cost is COMMON-MODE across arms (STATIC round-trips its constant weight too), so it largely
+# CANCELS in the gated treat-vs-benchmark differentials. Reference index levels FROZEN at
+# pre-registration (~end-of-training late-2021), constant over the whole OOS => no realized OOS price
+# leaks into the cost fraction (conservative overstatement late-OOS).
 costs:
-  commission_per_side_usd: 0.50 # IBKR micro futures (within $0.25-0.62 band; fixed mid)
-  commission_round_trip_usd: 1.00
-  spread_round_trip_ticks: 1.0 # typical 1-tick bid-ask, paid round trip
+  cost_formula: "cost_t = 2 * c_side * w" # full daily round trip on the held position (flat-RTH-only)
+  commission_per_side_usd: 0.62 # conservative IBKR retail (vs ~$0.25 floor)
+  spread_ticks: 1.0 # typical 1-tick bid-ask; half-spread = 0.5 tick paid per side
+  ref_notional_mode: "constant_frozen" # daily mark-to-notional is a REPORTED robustness check only
   per_symbol:
     MES:
       multiplier_usd_per_point: 5.0
-      tick_size_points: 0.25
       tick_value_usd: 1.25
-      spread_round_trip_usd: 1.25
-      round_trip_usd: 2.25 # 1.00 commission + 1.25 spread
-      ref_index_level: "OOS_window_median_RTH_close" # frozen from lake at impl time; ~4500
-      c_baseline_approx_bps: 1.0 # ~2.25/22500 ~= 1.0e-4 of notional per unit turnover
+      half_spread_usd: 0.625 # 0.5 tick
+      per_side_usd: 1.245 # 0.62 commission + 0.625 half-spread
+      ref_index_level: 5000 # FROZEN; notional = 5 * 5000 = $25,000
+      ref_notional_usd: 25000
+      c_per_side: 4.98e-5 # per-side fraction (~0.50 bps/side); round trip 2*c_side ~= 1.0 bps
     MNQ:
       multiplier_usd_per_point: 2.0
-      tick_size_points: 0.25
       tick_value_usd: 0.50
-      spread_round_trip_usd: 0.50
-      round_trip_usd: 1.50 # 1.00 commission + 0.50 spread
-      ref_index_level: "OOS_window_median_RTH_close" # frozen from lake at impl time; ~15500
-      c_baseline_approx_bps: 0.48 # ~1.50/31000 ~= 0.48e-4 of notional per unit turnover
-  # Stressed cost multipliers — gates must hold at 1x AND 3x AND 5x.
-  stress_multipliers_gated: [1.0, 3.0, 5.0]
-  optimistic_reported_only: [0.5] # reported, NEVER used to claim a pass
-  ref_notional_mode: "constant_frozen" # daily mark-to-notional is a REPORTED robustness check only
+      half_spread_usd: 0.25 # 0.5 tick
+      per_side_usd: 0.87 # 0.62 commission + 0.25 half-spread
+      ref_index_level: 17500 # FROZEN; notional = 2 * 17500 = $35,000
+      ref_notional_usd: 35000
+      c_per_side: 2.49e-5 # per-side fraction (~0.25 bps/side); round trip 2*c_side ~= 0.5 bps
+  stress_multipliers_gated: [1.0, 3.0] # gates must hold at base AND 3x (multiplies c_side)
+  reported_only_multipliers: [0.5, 5.0] # 0.5x optimistic + 5x extra-stress: REPORTED, never claim a pass
 
-# --- Metrics (FIXED a priori, exact formulas) ---
+# --- Significance test (FIXED a priori) ---
+significance:
+  test: "stationary_bootstrap" # Politis-Romano 1994, on the per-day differential, per symbol
+  one_sided: true
+  alpha: 0.05
+  n_resamples: 10000 # B
+  expected_block_length: 10 # L (trading days)
+  applied_to: "per-day net realized-utility differential U_treat - U_bench (the gated FKO comparisons)"
+  hac_cross_check: "West-Edison-Cho / DM-style HAC asymptotic p REPORTED as a cross-check, never the gate"
+  vte_stability_test: "frozen 13/18 binomial sign test (identical to Phase-23 G4)"
+
+# --- Metrics (FIXED a priori, exact) ---
 metrics:
-  vte: "abs( log( std(w*ret_drift_free_gross) / sigma_target_daily ) )" # PRIMARY, return-FREE
+  vte: "abs( log( realized_oos_vol(wv * r) / sigma_target_daily ) )" # LEG 1, return-FREE
   vte_per_fold: "same, within each of the 18 walk-forward folds"
-  sharpe: "sqrt(252) * mean(r_net) / std(r_net)" # at each cost level
-  primary_headline: "delta_Sharpe(treat vs notiming) @1c, and VTE_treat/VTE_notiming, per symbol"
+  performance_fee_bps_yr: >-
+    LEG 2 (money): per pairwise (treat vs k), phi solving sum_t U(R_treat_t - phi) = sum_t U(R_k_t)
+    on NET-of-cost R=1+net, U(R)=R - 0.5*gamma/(1+gamma)*R^2; economically-admissible root (smaller
+    |phi|); Delta_bps = phi * 252 * 1e4. Non-convergence = FAIL (never a silent re-spec).
+  min_effect_floor_bps_per_year: 25 # G3 minimum economically-meaningful fee vs STATIC
 
-# --- Verdict gates: per symbol, ALL must clear at h=1 (FIXED a priori) ---
+# --- Verdict gates: per symbol, ALL must clear AND E9 must not void (FIXED a priori) ---
 gates:
-  g1_vte_vs_notiming_and_benchmarks: # PRIMARY, return-assumption-free
-    rule: "VTE_treat < VTE_notiming AND VTE_treat < VTE_bench for EACH of {har,rw,ewma,garch}"
+  g1_vte_intersection: # LEG 1, return-assumption-FREE
+    rule: "VTE_treat < VTE_static AND VTE_treat < VTE_bench for EACH of {har,rw,ewma,garch}"
   g2_vte_temporal_stability:
     n_folds: 18
-    min_folds_treat_vte_below_notiming: 13 # 13/18 = one-sided 5% binomial sign test
-    rule: "treat per-fold VTE < notiming per-fold VTE in >= 13/18 folds"
-  g3_net_sharpe_no_harm_under_stress:
+    min_folds: 13 # 13/18 = one-sided 5% binomial sign test
+    rule: "treat per-fold VTE < static per-fold VTE in >= 13/18 folds"
+  g3_econ_value_vs_static:
+    min_fee_bps_yr: 25
+    rule: "Delta_bps(treat vs static) > +25 bps/yr at BASE cost, gamma=5, bootstrap one-sided p < 0.05"
+  g4_econ_value_vs_each_benchmark:
+    rule: "Delta_bps(treat vs B) > 0 with bootstrap p < 0.05 for EACH B in {har,rw,ewma,garch}"
+  g5_stressed_cost_robustness:
+    stress_multiplier: 3.0
+    rule: "G3 and G4 hold IN SIGN with bootstrap p < 0.05 at 3x cost (+25 floor may relax to >0 at 3x)"
+  g6_regime_robustness:
+    rule: "Delta_bps(treat vs static) >= 0 in BOTH calm and turbulent OOS sub-samples (base cost, gamma=5)"
+  g7_econ_value_temporal_stability:
+    n_folds: 18
+    min_folds: 13
+    rule: "treat beats static on net realized utility in >= 13/18 folds AND beats rw in >= 13/18 folds"
+  g8_exposure_neutrality_costerosion:
+    max_post_match_mean_weight_dev_vs_static: 0.05 # |w_bar_treat - w_bar_static| <= 0.05*w_bar_static (matching held)
+    min_net_to_gross_fee_frac_at_3x: 0.50 # treat-vs-static net fee @3x retains >= 50% of gross fee
     rule: >-
-      Sharpe_treat >= Sharpe_notiming at ALL of {1c,3c,5c}
-      AND Sharpe_treat >= Sharpe_bench for EACH of {har,rw,ewma,garch} at 1c
-  g4_turnover_cost_sanity:
-    max_cost_drag_frac_of_gross_at_3c: 0.25 # cost drag < 25% of gross return magnitude at 3x
-    max_turnover_ratio_vs_notiming: 2.0 # treat turnover within 2x of no-timing turnover
-    rule: "cost_drag@3c < 0.25*|gross_return| AND turnover_treat <= 2*turnover_notiming"
+      post-leverage-match |w_bar_treat - w_bar_static| <= 0.05*w_bar_static (gated fee is pure timing, not
+      a bigger-average-position bet) AND (net fee treat-vs-static @3x) >= 0.50*(gross fee treat-vs-static).
+      Closed jointly with E9 (matched mean exposure + near-zero active-exposure correlation).
+  e9_directional_leakage_void: # NOT a pass gate — a VOID gate; tests the ACTIVE (overweight) exposure
+    max_abs_corr: 0.10
+    rule: >-
+      for EACH gated arm k in {static,har,rw,ewma,garch}: |corr(w_treat - w_k, r_{t+1})| < 0.10 on the
+      mean-variance weight leg; if ANY active-exposure corr >= 0.10 the verdict is VOIDED, regardless of
+      G1-G8. (Per-arm absolute |corr(w_t, r_{t+1})| reported as a diagnostic.)
 
 # --- Decision (per the frozen rule) ---
 decision:
-  pass_per_symbol: "G1 AND G2 AND G3 AND G4"
+  pass_per_symbol: "G1 AND G2 AND G3 AND G4 AND G5 AND G6 AND G7 AND G8 all clear AND E9 not voided"
   both_pass: >-
-    confirmed OFFLINE/SIMULATED/PAPER economic value of the 1-day RV forecast as a costed
-    volatility-targeting overlay -> authorizes DESIGNING a separate future pre-registered
-    paper-trading study only. NEVER authorizes live trading or automated paper-execution deployment.
+    confirmed OFFLINE/SIMULATED/PAPER economic value of the 1-day volatility forecast (net of realistic
+    and stressed costs) -> authorizes DESIGNING a separate future pre-registered paper-trading-prototype
+    (or options/variance-swap valuation) only. NEVER authorizes live trading or automated deployment.
   one_pass: "flagged fragile; nothing promoted"
-  any_fail: "honest null (accuracy did not translate to costed economic value); operator re-scope only"
+  any_fail_or_void: "honest null (accuracy did not translate to costed, direction-free economic value); operator re-scope only"
 
 # --- Isolation-from-direction firewall (restated as a hard invariant) ---
 isolation:
-  long_only_no_sign_decision: true
-  only_differing_input_across_arms: "the variance forecast in the denominator sigma_forecast_t"
-  drift_identical_across_arms: true
-  vte_uses_no_return_assumption: true
+  long_only_no_sign_decision: true # w >= 0 (MV leg), w >= w_floor > 0 (vol-target leg)
+  only_differing_input_across_arms: "the variance forecast sigma2_forecast_t"
+  mu_gamma_rf_identical_across_arms: true # injects no timing signal; NOT assumed to cancel exactly (cap+quad utility nonlinear)
+  mu_invariance_is_reported_not_asserted: true # verified by the fixed-equity-premium robustness variant
+  vte_leg_uses_no_return_assumption: true
+  empirical_backstop: "E9 voids on |corr(w_treat - w_k, r)| >= 0.10 for any gated arm k (ACTIVE exposure)"
 
 # --- Artifacts ---
 artifacts:
   per_symbol_dir: "data/volatility/runs_ev"
   verdict_json: "data/volatility/runs_ev/verdict.json"
-  mlflow_experiment: "volatility-econ-ev1"
+  mlflow_experiment: "volatility-econvalue-ev1"
