@@ -1,7 +1,8 @@
 # Research Verdicts — Options-System
 
-**Status as of Phase 23 (2026-06-23): no promoted *tradeable* model, but the program's first
-confirmed forecast skill. No strategy, backtest, or live trading is authorized.** Six attempts at
+**Status as of Phase 25 (2026-06-23): no promoted *tradeable* model. The program has its first
+confirmed forecast skill (Phase 23), but that skill did NOT translate into economic value (Phase 25 —
+honest null). No strategy, backtest, or live trading is authorized.** Six attempts at
 intraday *direction* (price 5, macro 6, TA 10, microstructure 14, sentiment 19, meta-labeling 20)
 all returned honest nulls through the same fixed framework. **Phase 21 pivoted to a different
 question — forecast *accuracy* of realized volatility vs the HAR-RV benchmark** (not a directional
@@ -13,9 +14,14 @@ symbols (all four gates pass).** That is the program's first positive verdict �
 result only (it authorizes research, never live trading). **Phase 24 then tested whether the free
 Phase-22 data blocks improve that confirmed forecast: the VIX/cross-asset block (`x1`) added NO
 incremental value on either symbol (it even hurt in turbulent regimes), and the GKG news block (`s3`)
-is deferred until its backfill covers the test window.** The confirmed Phase-23 baseline stands. An
-honest null was always an explicit success criterion; a fabricated edge was the one unacceptable
-outcome.
+is deferred until its backfill covers the test window.** The confirmed Phase-23 baseline stands.
+**Phase 25 then asked the bridge question — does the confirmed accuracy translate into *money*? — with
+a Fleming-Kirby-Ostdiek economic-value study (leverage-matched performance fee + a return-free
+vol-targeting leg, an E9 directional-leakage void gate, costs gated at 1× and 3×). The fee vs the
+no-timing baseline is negative on both symbols: accuracy did NOT translate into cost-robust,
+direction-free economic value — an honest null, and notably *not* a smuggled directional bet (E9
+clean).** An honest null was always an explicit success criterion; a fabricated edge was the one
+unacceptable outcome.
 
 This document locks those conclusions so future work does not re-litigate them, and
 records that none of them authorizes building the economic backtest / strategy / risk
@@ -43,6 +49,7 @@ robust across regimes); it is not directly comparable to the directional edge ba
 | **21** | **Volatility forecast** (DIFFERENT bar — accuracy, not direction): 5-min sub-sampled daily RV; fixed LightGBM (HAR predictors + price/vol/macro/`s2` blocks, QLIKE objective, **no search**) vs **HAR-RV** benchmark; anchored expanding walk-forward; gates G1 (QLIKE↓ + DM-significant) & G2 (regime-robust) at h=5 (pre-registered: `docs/PHASE21_PREREGISTRATION.md`) | Per symbol, full `bars_1m` 2019→2026; **OOS 2022→2026 ≈ 1,135 days/symbol** | **h=5 (gated):** treatment marginally *worse* than HAR (MES QLIKE 0.219 vs 0.210, NQ 0.161 vs 0.157; DM not sig., p 0.81/0.76) AND not regime-robust (better in calm, worse in turbulent) → G1✗ G2✗. **h=1 (diagnostic, not gated): treatment BEATS HAR significantly both symbols** (MES p≈0, NQ p=1e-6). SHAP ~75% price/vol, ~25% HAR, ~0% sentiment (4.4% coverage) | **No significant skill** at h=5 (MES + MNQ) | **No** (h=5); h=1 is a noted re-scope pointer |
 | **23** | **Volatility-forecast CONFIRMATION at h=1** (re-scope of the Phase-21 lead): SAME fixed LightGBM + SAME existing features (Phase-22 free-data blocks OFF — "confirm first"), under a **hardened benchmark battery** — must beat HAR-RV **and** random-walk, EWMA(λ=0.94) and **GARCH(1,1)** (dep-free scipy QMLE, refit per fold, RTH-internal returns); gates G1 (vs HAR), G2 (regime), **G3 (beat each challenger, sig. DM)**, **G4 (beat HAR & RW in ≥13/18 WF folds)** (pre-registered: `docs/PHASE23_PREREGISTRATION.md`) | Per symbol, OOS 2022→2026, **n=1,139/symbol; 18 WF folds** | **None — all four gates PASS both symbols.** QLIKE treat 0.246 (MES)/0.224 (MNQ) beats HAR 0.308/0.267, RW 0.760/0.695, EWMA 0.360/0.295, GARCH 0.331/0.285; DM p≈0–5e-6 vs every benchmark; treat beats HAR in 16/18 folds, RW in 18/18; regime-robust | **CONFIRMED 1-day RV-forecast skill** (MES + MNQ) — first positive verdict in the program | **No** (forecast skill ≠ tradeable money; authorizes the **Phase-24 free-data study** only) |
 | **24** | **Free-data incremental study** over the confirmed Phase-23 h=1 baseline (DIFFERENT bar — does a free block *improve* the confirmed forecast?): baseline = the Phase-23 model verbatim; each free block tested as an additive arm; gates G1 (incremental QLIKE↓ + sig. DM), G2 (regime), G3 (beat baseline in ≥13/18 folds); 80% OOS-coverage precondition (pre-registered: `docs/PHASE24_PREREGISTRATION.md`) | Per symbol, OOS 2022→2026, n=1,139/symbol | **`x1` (VIX/cross-asset): augmented is WORSE** (MES QLIKE 0.260 vs 0.246, MNQ 0.234 vs 0.224; one-sided DM p≈0.997; beats baseline in only 8–10/18 folds; hurts in turbulent regime → G1/G2/G3 ✗) despite ~27% SHAP use. **`s3` (GKG news): DEFERRED** (coverage ~20% < 80%). | `x1`: **no incremental value** (MES + MNQ); `s3`: **deferred**. Confirmed Phase-23 baseline stands | **No** |
+| **25** | **Economic-value study** of the confirmed h=1 forecast (DIFFERENT bar — does accuracy → *money*?): Fleming-Kirby-Ostdiek performance fee (leverage-matched, money leg) + a return-free vol-targeting-error leg, six arms differing only in `σ²`, long-only, fixed non-directional `μ_bar`/`γ=5` across arms, costed daily round-trip (1× **and** 3×), Politis-Romano stationary bootstrap (B=10k, L=10); 9 gates incl. an **E9 directional-leakage VOID** (pre-registered: `docs/PHASE25_PREREGISTRATION.md`) | Per symbol, OOS 2022→2026, n=1,139/symbol; forecasts reused verbatim (QLIKE/fingerprint fail-closed) | **Fee vs the no-timing `STATIC` baseline is NEGATIVE** (MES −36.1 bps/yr p=0.73; MNQ −1.1 bps/yr p=0.51); `STATIC` already hits the vol target (VTE 0.075/0.003) and the timing overlay adds noise (VTE_treat 0.147/0.149 → G1✗); `TREAT` *does* out-earn HAR (+64/+75) & RW (+70/+73) but not `STATIC`/GARCH → G3/G4 ✗; **E9 clean** (max \|corr\| 0.047/0.040 < 0.10 — NOT a directional leak) | **No costed, direction-free economic value** (MES + MNQ) — honest null; accuracy ≠ money net of costs | **No** |
 
 ## Why each null was still useful
 
@@ -129,15 +136,29 @@ robust across regimes); it is not directly comparable to the directional edge ba
   (GKG news) is deferred** until its backfill covers ≥ 80 % of the OOS window (currently ~20 %). The
   confirmed Phase-23 baseline stands unchanged; the lever is not re-litigated. See
   `docs/PHASE24_FREEDATA.md` + `docs/PHASE24_PREREGISTRATION.md`.
-- **Remaining forks (operator decision, none auto-authorized):** (a) an **economic-value study** —
-  the leading next step: translate the confirmed h = 1 forecast skill into position-sizing / a vol
-  overlay / Phase-2 options pricing with realistic costs, the bridge from "accuracy" to "money"; (b)
-  **re-run the deferred `s3` GKG arm** once its backfill reaches the OOS window (free, automatic); (c)
-  MBP-10 multi-level order-flow depth — **paid, billing-gated, BLOCKED** until billing is deliberately
-  unfrozen (`docs/BILLING_SAFETY.md`, `src/options_system/common/databento_guard.py`). **No strategy /
-  economic backtest / risk / execution / live trading is authorized** until a lever clears the
-  relevant pre-registered bar (forecast skill alone does not).
+- **The economic-value study is the seventh honest null (Phase 25) — but a clean one.** The confirmed
+  h = 1 forecast was run through a pre-registered Fleming-Kirby-Ostdiek economic-value study (a
+  leverage-matched performance fee + a return-free vol-targeting-error leg, six arms differing only in
+  the variance forecast, long-only with a fixed non-directional drift, costs gated at 1× and 3×, a
+  stationary-bootstrap significance test, and an **E9 directional-leakage void gate**). **The fee vs the
+  no-timing `STATIC` baseline is negative on both symbols** (MES −36 bps/yr, MNQ −1 bps/yr): the
+  constant-weight baseline already controls realized vol well, and the timing overlay adds noise rather
+  than value net of costs. The forecast *does* out-earn HAR and RW, just not the just-being-invested
+  baseline. Crucially the result is **not a directional leak** — every E9 active-exposure correlation is
+  < 0.05 (≪ 0.10) — so this is a genuine "accuracy ≠ money net of costs" null, the contract's explicitly
+  acceptable, likely-modal outcome. The lever is **not re-litigated** (no γ-sweep, no cost-shopping,
+  no framing swap). See `docs/PHASE25_ECONVALUE.md` + `docs/PHASE25_PREREGISTRATION.md`.
+- **Remaining forks (operator decision, none auto-authorized):** (a) **re-run the deferred `s3` GKG
+  arm** once its backfill reaches the OOS window (free, automatic); (b) a **horizon / framing redesign**
+  of the economic question (a different overlay, an options/variance-swap valuation, a higher-frequency
+  decision) — a deliberate re-scope, not a re-run of the closed `ev1` design; (c) MBP-10 multi-level
+  order-flow depth — **paid, billing-gated, BLOCKED** until billing is deliberately unfrozen
+  (`docs/BILLING_SAFETY.md`, `src/options_system/common/databento_guard.py`). **No strategy / economic
+  backtest / risk / execution / live trading is authorized** until a lever clears the relevant
+  pre-registered bar (forecast skill and a positive economic-value verdict are distinct bars; neither
+  has been cleared for trading).
 
 Per-phase method docs: `docs/MODEL.md` (5), `docs/MACRO.md` (6), `docs/TA_FEATURES.md`
 (10), `docs/MICRO_MODEL.md` (14), `docs/PHASE19_AB.md` (19), `docs/PHASE20_META.md` (20),
-`docs/PHASE21_VOL.md` (21), `docs/PHASE23_VOL.md` (23), `docs/PHASE24_FREEDATA.md` (24).
+`docs/PHASE21_VOL.md` (21), `docs/PHASE23_VOL.md` (23), `docs/PHASE24_FREEDATA.md` (24),
+`docs/PHASE25_ECONVALUE.md` (25).

@@ -990,3 +990,52 @@ OOS window). Frozen before modeling: `docs/PHASE24_PREREGISTRATION.md` + `config
   `docs/PHASE24_FREEDATA.md`, `docs/PHASE24_PREREGISTRATION.md`; verdict ledger updated. Tests:
   `tests/test_phase24_freedata.py`. Full suite green, ruff + ty clean. Forecast-skill verdict only;
   no spend, no trading. Leading next fork: an **economic-value study** of the confirmed h=1 skill.
+
+## Phase 25 — economic-value study: the confirmed forecast does not translate into money (2026-06-23)
+- **Question.** Does the confirmed Phase-23 h=1 volatility forecast deliver positive, cost-robust,
+  *direction-free* economic value over a no-timing baseline and every benchmark, per symbol? Frozen
+  contract `docs/PHASE25_PREREGISTRATION.md` / `config/phase25_econ.yaml` (`econvalue_version=ev1`);
+  implemented after the contract was frozen (commit `463e891`), no modeling had run at freeze time.
+- **Framework.** Fleming-Kirby-Ostdiek performance fee (the money leg) + a return-assumption-free
+  vol-targeting-error leg (co-required) + a Politis-Romano stationary bootstrap (B=10k, L=10,
+  one-sided) on the per-day net realized-utility differential. Six arms (`TREAT`/`HAR`/`RW`/`EWMA`/
+  `GARCH`/`STATIC`) differ **only** in their variance forecast `σ²`. Forecasts reused verbatim
+  (deterministic regen of the Phase-23 pipeline, seed 7); the economic layer adds **zero** fitted
+  parameters.
+- **Integrity core (isolate variance value from the six directional nulls).** Single fixed causal
+  `μ_bar` (per-fold training-mean return, forced ≥0) and `γ=5` identical across all arms; long-only
+  `[0, w_cap]`; identical realized `r_{t+1}` per arm; the money leg is **leverage-matched** to `STATIC`
+  (Jensen `w̄_treat ≥ w̄_static` confound removed); the VTE leg uses drift=0; and an **E9 void gate**
+  fails the verdict if any active-exposure `|corr(w_treat−w_k, r_{t+1})| ≥ 0.10`. Costs are a daily
+  round-trip `2·c_side·w` (common-mode), reference notional frozen at pre-registration (no OOS price
+  leak), gated at 1× **and** 3×.
+- **t+1 alignment (correctness-critical).** P&L earns `next_rth_log_return` — a one-session forward
+  shift of the RTH-internal open-to-close return — NOT `run_h1.aligned_returns` (the same-session `r_t`,
+  which would multiply a close-set weight by an already-realized return). Proven by an alignment unit
+  test on the pure shift and on the per-symbol session→t+1 mapping.
+- **Reproduction guard (fail-closed).** Asserts per-arm OOS QLIKE (treat byte-exact 0.246401/0.224083,
+  benchmarks 3dp), the GARCH diagnostics, the 18-fold partition, and n=1,139 — every dimension with a
+  frozen Phase-23 reference — plus a persisted full-frame SHA-256 fingerprint compared on re-runs.
+- **Verdict.** **No costed, direction-free economic value, both symbols** — fee vs `STATIC` is negative
+  (MES −36.1 bps/yr p=0.73; MNQ −1.1 bps/yr p=0.51). `STATIC`'s causal unconditional variance already
+  hits the vol target (VTE 0.075/0.003) and the timing overlay adds realized-vol noise (VTE_treat
+  0.147/0.149 → G1✗); `TREAT` out-earns HAR (+64/+75) and RW (+70/+73) but not the just-being-invested
+  baseline or GARCH (G3/G4 ✗). **E9 clean** (max |corr| 0.047/0.040 ≪ 0.10) — a genuine "accuracy ≠
+  money" null, not a smuggled directional bet — the program's **seventh honest null** and the
+  contract's explicitly acceptable, likely-modal outcome. HAC/DM cross-check p-values track the
+  bootstrap p-values (validates the significance machinery). Lever not re-litigated (no γ-sweep, no
+  cost-shopping, no framing swap).
+- **Adversarial review (2 findings folded before finalizing).** A Codex pass + a 10-agent
+  contract-faithfulness Workflow (verdict: faithful) flagged: (1) the reproduction guard pinned only
+  QLIKE, so a QLIKE-preserving drift in fold ids / GARCH fallback / frame length could be blessed on the
+  first run → fixed by enforcing the structural pins (n_oos, n_folds, GARCH diagnostics) on every run
+  before any write; (2) `--no-save` still wrote OOS artifacts → fixed by splitting the read-only drift
+  check from the write and persisting only after all symbols succeed (all-or-nothing, no dry-run
+  writes). A cosmetic `fragile`+`void` co-report and a docstring overclaim were also corrected.
+- **Files:** `volatility/econ.py` (new — pure economic primitives), `volatility/config_econ.py` (new —
+  inherits the Phase-23 core), `volatility/run_econ.py` (new — orchestrator + reproduction guard).
+  Docs: `docs/PHASE25_ECONVALUE.md`; verdict ledger updated. Tests: `tests/test_phase25_econ.py` (29).
+  Artifacts (gitignored): `data/volatility/runs_ev/`. Full suite green, ruff + ty clean. Offline /
+  simulated / paper verdict only; no spend, no trading; a positive verdict would have authorized only a
+  separate future pre-registered paper-prototype design, never live trading.
+
